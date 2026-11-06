@@ -1,0 +1,92 @@
+name: Personal IDE links build
+
+on:
+  push:
+    branches: [ide-links-build]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: personal-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Test URL policy
+        working-directory: agtermCore
+        run: ../scripts/watchdog.sh swift test --filter LinkPolicyTests
+        env:
+          WATCHDOG_SECONDS: "600"
+          DIAG_DIR: ${{ github.workspace }}/test-hang
+
+      - name: Test core package
+        working-directory: agtermCore
+        run: ../scripts/watchdog.sh swift test
+        env:
+          WATCHDOG_SECONDS: "900"
+          DIAG_DIR: ${{ github.workspace }}/test-hang
+
+      - name: Install XcodeGen
+        run: command -v xcodegen >/dev/null || brew install xcodegen
+
+      - name: Build release application
+        run: ./scripts/build.sh
+
+      - name: Verify architecture and signature
+        run: |
+          set -euo pipefail
+          app=build/DerivedData/Build/Products/Release/agterm.app
+          test "$(lipo -archs "$app/Contents/MacOS/agterm")" = arm64
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -d --verbose=4 "$app"
+
+      - name: Package application
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/DerivedData/Build/Products/Release/agterm.app \
+            dist/agterm-0.34.0-ide-links-arm64.zip
+          (cd dist && shasum -a 256 agterm-0.34.0-ide-links-arm64.zip > SHA256SUMS)
+          {
+            echo '### agterm 0.34.0 with additional URL schemes'
+            echo 'ARM64, ad-hoc signed, not notarized by Apple. Not an official release.'
+            echo
+            echo 'Before fully quitting and restarting agterm, set its GUI environment:'
+            echo '```bash'
+            echo "launchctl setenv AGTERM_ALLOWED_URL_SCHEMES 'idea,phpstorm,vscode,cursor'"
+            echo '```'
+            echo 'This opt-in trusts all commands of each selected scheme. file:// safety rules are unchanged.'
+            echo 'The variable is scoped to the current login session; exporting it inside a shell is not sufficient.'
+            echo 'To undo: launchctl unsetenv AGTERM_ALLOWED_URL_SCHEMES, then fully restart agterm.'
+            echo
+            echo '```text'
+            shasum -a 256 dist/agterm-0.34.0-ide-links-arm64.zip
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agterm-0.34.0-ide-links-arm64
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload test diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: personal-build-test-hang
+          path: test-hang/
+          if-no-files-found: ignore
+          retention-days: 7

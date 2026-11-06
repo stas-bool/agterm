@@ -2,7 +2,7 @@ import Foundation
 
 /// Decides what agterm does when a terminal hyperlink is clicked (`GHOSTTY_ACTION_OPEN_URL`). A terminal
 /// renders UNTRUSTED program output, so an escape-sequence link can carry any scheme. `disposition(for:)`
-/// maps a raw link to OPEN a web/mail URL (`NSWorkspace.open`), REVEAL a LOCAL `file://` link in Finder
+/// maps a raw link to OPEN a web/mail or explicitly allowed URL (`NSWorkspace.open`), REVEAL a LOCAL `file://` link in Finder
 /// (`NSWorkspace.activateFileViewerSelecting`), or IGNORE anything else. `file://` is revealed, never
 /// opened: opening goes through LaunchServices (the Finder double-click path), so a click on
 /// `file:///…/X.app` or `.command` would LAUNCH it, while reveal only selects it. A `file://` whose host is
@@ -95,10 +95,21 @@ public enum LinkPolicy {
     /// auto-mount path (`/net`, `/Network`, `/home`, checked AFTER `..` normalization so `/tmp/../net/x`
     /// can't sneak through), or any other scheme / schemeless / unparseable input → `.ignore`. `localHosts`
     /// is injected (default: this machine's names) so the decision stays host-free and unit-testable.
-    public static func disposition(for raw: String, localHosts: Set<String> = localHostNames) -> LinkDisposition {
+    /// `additionalSchemes` is an explicit comma-separated opt-in, matched without case or surrounding
+    /// whitespace. It cannot override the file rules; malformed scheme tokens never match a URL scheme.
+    public static func disposition(
+        for raw: String,
+        localHosts: Set<String> = localHostNames,
+        additionalSchemes: String? = nil
+    ) -> LinkDisposition {
         guard let url = URL(string: raw), let scheme = url.scheme?.lowercased() else { return .ignore }
         if permittedSchemes.contains(scheme) { return .open(url) }
-        guard scheme == "file" else { return .ignore }
+        if scheme != "file" {
+            let configured = (additionalSchemes ?? "").split(separator: ",").map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            }
+            return configured.contains(scheme) ? .open(url) : .ignore
+        }
         let host = normalizedHost(url.host(percentEncoded: false) ?? "")
         guard host.isEmpty || localHosts.contains(host) else { return .ignore }
         // reject an empty/relative path (empty would make `URL(fileURLWithPath:)` the process CWD) and a
