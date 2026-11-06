@@ -556,10 +556,7 @@ extension GhosttySurfaceView: @preconcurrency NSTextInputClient {
     /// Acts on a clicked terminal link (`GHOSTTY_ACTION_OPEN_URL`); the scheme/host decision lives in the
     /// host-free `LinkPolicy`. A `file://` link is REVEALED in Finder, never opened — reveal executes nothing.
     func openLink(_ raw: String) {
-        switch LinkPolicy.disposition(
-            for: raw,
-            additionalSchemes: ProcessInfo.processInfo.environment["AGTERM_ALLOWED_URL_SCHEMES"]
-        ) {
+        switch LinkPolicy.disposition(for: raw) {
         case let .open(url): NSWorkspace.shared.open(url)
         case let .reveal(url): NSWorkspace.shared.activateFileViewerSelecting([url])
         case .ignore: return

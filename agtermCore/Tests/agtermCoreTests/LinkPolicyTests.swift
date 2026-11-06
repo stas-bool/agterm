@@ -5,58 +5,16 @@ import Testing
 struct LinkPolicyTests {
     // MARK: disposition (open / reveal / ignore)
 
-    @Test func explicitlyAllowedSchemeOpensWithoutChangingURL() throws {
-        let raw = "idea://open?file=/tmp/My%20Project/controller.php&line=36"
-        let expected = try #require(URL(string: raw))
-        #expect(LinkPolicy.disposition(for: raw, localHosts: Self.localHosts) == .ignore)
-        #expect(LinkPolicy.disposition(
-            for: raw, localHosts: Self.localHosts, additionalSchemes: "idea"
-        ) == .open(expected))
-    }
-
-    @Test(arguments: ["idea", " IDEA ", " ,phpstorm, IDEA,idea,, "])
-    func configuredSchemesIgnoreCaseWhitespaceAndDuplicates(_ configured: String) throws {
-        let raw = "IDEA://open?file=/tmp/controller.php&line=36"
-        let expected = try #require(URL(string: raw))
-        #expect(LinkPolicy.disposition(for: raw, additionalSchemes: configured) == .open(expected))
-    }
-
-    @Test(arguments: ["", " , , ", "phpstorm", "*", "idea://", "id ea", "1idea", "idea:"])
-    func unlistedSchemeRemainsBlocked(_ configured: String) {
-        #expect(LinkPolicy.disposition(
-            for: "idea://open?file=/tmp/controller.php&line=36", additionalSchemes: configured
-        ) == .ignore)
-    }
-
-    @Test(arguments: ["phpstorm", "vscode", "cursor", "custom+editor", "custom.editor", "custom-editor"])
-    func additionalSchemesAreNotLimitedToKnownEditors(_ scheme: String) throws {
-        let raw = "\(scheme)://open?file=/tmp/controller.php&line=36"
-        let expected = try #require(URL(string: raw))
-        #expect(LinkPolicy.disposition(for: raw, additionalSchemes: scheme) == .open(expected))
-    }
-
-    @Test func additionalSchemesDoNotRemoveDefaultPermissions() throws {
-        let raw = "https://example.com/path"
-        let expected = try #require(URL(string: raw))
-        #expect(LinkPolicy.disposition(for: raw, additionalSchemes: "idea") == .open(expected))
-    }
-
-    @Test func allowingFileSchemeStillRevealsLocalFiles() {
-        #expect(LinkPolicy.disposition(
-            for: "file:///tmp/example.command", localHosts: Self.localHosts, additionalSchemes: "file"
-        ) == .reveal(URL(fileURLWithPath: "/tmp/example.command")))
-    }
-
     @Test(arguments: [
-        "file://otherhost/tmp/example.command",
-        "file:///net/server/share",
-        "file://localhost//server/share",
-        "file:relative",
+        "idea://open?file=/tmp/My%20Project/controller.php&line=36",
+        "IDEA://open?file=/tmp/controller.php&line=36",
+        "phpstorm://open?file=/tmp/controller.php&line=36",
+        "vscode://file/tmp/controller.php:36:5",
+        "cursor://file/tmp/controller.php:36:5",
     ])
-    func allowingFileSchemeDoesNotBypassSafetyChecks(_ raw: String) {
-        #expect(LinkPolicy.disposition(
-            for: raw, localHosts: Self.localHosts, additionalSchemes: "file,idea"
-        ) == .ignore)
+    func editorSchemesOpenWithoutEnvironmentConfiguration(_ raw: String) throws {
+        let expected = try #require(URL(string: raw))
+        #expect(LinkPolicy.disposition(for: raw, localHosts: Self.localHosts) == .open(expected))
     }
 
     /// The garbage suffixes model a `String(cString:)` over-read past `len`: the trailing space + junk
@@ -178,7 +136,8 @@ struct LinkPolicyTests {
 
     @Test(arguments: [
         "javascript:alert(1)",
-        "vscode://file/x",
+        "custom+editor://open?file=/tmp/controller.php",
+        "custom.editor://open?file=/tmp/controller.php",
         "tel:+15550100",
         "example.com",
         "",

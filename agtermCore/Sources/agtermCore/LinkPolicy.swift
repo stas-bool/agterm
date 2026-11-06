@@ -10,9 +10,10 @@ import Foundation
 /// network/SMB mount. Host-free (Foundation-only) so it is unit-tested — the local host names are injected;
 /// the app-side glue only calls the two `NSWorkspace` methods (same split as `ShellEscape`).
 public enum LinkPolicy {
-    /// The schemes safe to hand to the system opener — web + mail only, none that hands off to a local
-    /// executable/handler.
-    public static let permittedSchemes: Set<String> = ["http", "https", "mailto", "ftp"]
+    /// Fixed web, mail and editor schemes passed to their registered system handlers.
+    public static let permittedSchemes: Set<String> = [
+        "http", "https", "mailto", "ftp", "idea", "phpstorm", "vscode", "cursor",
+    ]
 
     /// What a link click should do. Carries the target URL for `.open`/`.reveal`.
     public enum LinkDisposition: Equatable {
@@ -88,28 +89,17 @@ public enum LinkPolicy {
         return "/" + out.joined(separator: "/")
     }
 
-    /// Maps a raw terminal link to an action: a permitted web/mail scheme → `.open`; a LOCAL `file://` link
+    /// Maps a raw terminal link to an action: a permitted web/mail/editor scheme → `.open`; a LOCAL `file://` link
     /// (empty host, or a host in `localHosts`) → `.reveal` of the HOST-STRIPPED, dot-normalized local path,
     /// so Finder only ever sees a plain `/…` path and never leans on the original authority for host
     /// handling; a `file://` with a non-local host, an empty/relative path, a UNC-style `//`-path, an
     /// auto-mount path (`/net`, `/Network`, `/home`, checked AFTER `..` normalization so `/tmp/../net/x`
     /// can't sneak through), or any other scheme / schemeless / unparseable input → `.ignore`. `localHosts`
     /// is injected (default: this machine's names) so the decision stays host-free and unit-testable.
-    /// `additionalSchemes` is an explicit comma-separated opt-in, matched without case or surrounding
-    /// whitespace. It cannot override the file rules; malformed scheme tokens never match a URL scheme.
-    public static func disposition(
-        for raw: String,
-        localHosts: Set<String> = localHostNames,
-        additionalSchemes: String? = nil
-    ) -> LinkDisposition {
+    public static func disposition(for raw: String, localHosts: Set<String> = localHostNames) -> LinkDisposition {
         guard let url = URL(string: raw), let scheme = url.scheme?.lowercased() else { return .ignore }
         if permittedSchemes.contains(scheme) { return .open(url) }
-        if scheme != "file" {
-            let configured = (additionalSchemes ?? "").split(separator: ",").map {
-                $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            }
-            return configured.contains(scheme) ? .open(url) : .ignore
-        }
+        guard scheme == "file" else { return .ignore }
         let host = normalizedHost(url.host(percentEncoded: false) ?? "")
         guard host.isEmpty || localHosts.contains(host) else { return .ignore }
         // reject an empty/relative path (empty would make `URL(fileURLWithPath:)` the process CWD) and a

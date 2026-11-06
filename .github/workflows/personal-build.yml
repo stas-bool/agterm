@@ -59,16 +59,12 @@ jobs:
             dist/agterm-0.34.0-ide-links-arm64.zip
           (cd dist && shasum -a 256 agterm-0.34.0-ide-links-arm64.zip > SHA256SUMS)
           {
-            echo '### agterm 0.34.0 with additional URL schemes'
+            echo '### agterm 0.34.0 with built-in editor URL schemes'
             echo 'ARM64, ad-hoc signed, not notarized by Apple. Not an official release.'
             echo
-            echo 'Before fully quitting and restarting agterm, set its GUI environment:'
-            echo '```bash'
-            echo "launchctl setenv AGTERM_ALLOWED_URL_SCHEMES 'idea,phpstorm,vscode,cursor'"
-            echo '```'
-            echo 'This opt-in trusts all commands of each selected scheme. file:// safety rules are unchanged.'
-            echo 'The variable is scoped to the current login session; exporting it inside a shell is not sufficient.'
-            echo 'To undo: launchctl unsetenv AGTERM_ALLOWED_URL_SCHEMES, then fully restart agterm.'
+            echo 'idea://, phpstorm://, vscode:// and cursor:// are enabled without configuration.'
+            echo 'All commands of those four registered handlers are allowed. file:// safety rules are unchanged.'
+            echo 'No environment variable or login agent is required.'
             echo
             echo '```text'
             shasum -a 256 dist/agterm-0.34.0-ide-links-arm64.zip
