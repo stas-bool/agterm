@@ -48,6 +48,18 @@ struct LinkPolicyTests {
     }
     // MARK: disposition (open / reveal / ignore)
 
+    @Test(arguments: [
+        "idea://open?file=/tmp/My%20Project/controller.php&line=36",
+        "IDEA://open?file=/tmp/controller.php&line=36",
+        "phpstorm://open?file=/tmp/controller.php&line=36",
+        "vscode://file/tmp/controller.php:36:5",
+        "cursor://file/tmp/controller.php:36:5",
+    ])
+    func editorSchemesOpenWithoutEnvironmentConfiguration(_ raw: String) throws {
+        let expected = try #require(URL(string: raw))
+        #expect(LinkPolicy.disposition(for: raw, localHosts: Self.localHosts) == .open(expected))
+    }
+
     /// The garbage suffixes model a `String(cString:)` over-read past `len`: the trailing space + junk
     /// leave the URL unparseable or non-web, so it can never come back `.open`.
     @Test func trailingGarbageDoesNotYieldAWebURL() {
@@ -173,7 +185,8 @@ struct LinkPolicyTests {
 
     @Test(arguments: [
         "javascript:alert(1)",
-        "vscode://file/x",
+        "custom+editor://open?file=/tmp/controller.php",
+        "custom.editor://open?file=/tmp/controller.php",
         "tel:+15550100",
         "example.com",
         "",

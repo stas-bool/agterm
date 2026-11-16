@@ -2,7 +2,7 @@ import Foundation
 
 /// Decides what agterm does when a terminal hyperlink is clicked (`GHOSTTY_ACTION_OPEN_URL`). A terminal
 /// renders UNTRUSTED program output, so an escape-sequence link can carry any scheme. `disposition(for:)`
-/// maps a raw link to OPEN a web/mail URL (`NSWorkspace.open`), REVEAL a LOCAL `file://` link in Finder
+/// maps a raw link to OPEN a web/mail or explicitly allowed URL (`NSWorkspace.open`), REVEAL a LOCAL `file://` link in Finder
 /// (`NSWorkspace.activateFileViewerSelecting`), or IGNORE anything else. `file://` is revealed, never
 /// opened: opening goes through LaunchServices (the Finder double-click path), so a click on
 /// `file:///…/X.app` or `.command` would LAUNCH it, while reveal only selects it. A `file://` whose host is
@@ -12,9 +12,10 @@ import Foundation
 /// (Foundation-only) so it is unit-tested — the local host names are injected; the app side only carries
 /// out the route (same split as `ShellEscape`).
 public enum LinkPolicy {
-    /// The schemes safe to hand to the system opener — web + mail only, none that hands off to a local
-    /// executable/handler.
-    public static let permittedSchemes: Set<String> = ["http", "https", "mailto", "ftp"]
+    /// Fixed web, mail and editor schemes passed to their registered system handlers.
+    public static let permittedSchemes: Set<String> = [
+        "http", "https", "mailto", "ftp", "idea", "phpstorm", "vscode", "cursor",
+    ]
 
     /// LinkDisposition is the action for a clicked link.
     public enum LinkDisposition: Equatable {
@@ -209,7 +210,7 @@ public enum LinkPolicy {
         return "/" + out.joined(separator: "/")
     }
 
-    /// disposition maps a raw terminal link to an action: a permitted web/mail scheme → `.open`; a local path → `.image`,
+    /// disposition maps a raw terminal link to an action: a permitted web/mail/editor scheme → `.open`; a local path → `.image`,
     /// `.markdown`, `.document`, `.text` or `.reveal` (`localPath`); a `file://` with a non-local host, or any other scheme, schemeless or
     /// unparseable input → `.ignore`. A local path is a LOCAL `file://` link (empty host, or a host in
     /// `localHosts`), host-stripped so Finder never leans on the original authority, or a bare path
