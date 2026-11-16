@@ -53,13 +53,14 @@ jobs:
       - name: Package application
         run: |
           set -euo pipefail
+          VERSION="$(git describe --tags --abbrev=0 --match 'v[0-9]*' | sed 's/^v//')"
           mkdir -p dist
           ditto -c -k --sequesterRsrc --keepParent \
             build/DerivedData/Build/Products/Release/agterm.app \
-            dist/agterm-0.34.0-ide-links-arm64.zip
-          (cd dist && shasum -a 256 agterm-0.34.0-ide-links-arm64.zip > SHA256SUMS)
+            "dist/agterm-${VERSION}-ide-links-arm64.zip"
+          (cd dist && shasum -a 256 "agterm-${VERSION}-ide-links-arm64.zip" > SHA256SUMS)
           {
-            echo '### agterm 0.34.0 with built-in editor URL schemes'
+            echo "### agterm ${VERSION} with built-in editor URL schemes"
             echo 'ARM64, ad-hoc signed, not notarized by Apple. Not an official release.'
             echo
             echo 'idea://, phpstorm://, vscode:// and cursor:// are enabled without configuration.'
@@ -67,13 +68,14 @@ jobs:
             echo 'No environment variable or login agent is required.'
             echo
             echo '```text'
-            shasum -a 256 dist/agterm-0.34.0-ide-links-arm64.zip
+            shasum -a 256 "dist/agterm-${VERSION}-ide-links-arm64.zip"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: agterm-0.34.0-ide-links-arm64
+          name: agterm-${{ env.VERSION }}-ide-links-arm64
           path: dist/
           if-no-files-found: error
           retention-days: 14
