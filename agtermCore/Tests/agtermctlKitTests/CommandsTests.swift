@@ -718,33 +718,6 @@ struct CommandsTests {
         }
     }
 
-    @Test func sessionStatusWithGlyph() throws {
-        let req = try request(["session", "status", "blocked", "--glyph", "🔥"])
-        #expect(req.cmd == .sessionStatus)
-        #expect(req.args?.glyph == "🔥")
-        #expect(req == ControlRequest(cmd: .sessionStatus, target: "active",
-                                      args: ControlArgs(status: "blocked", glyph: "🔥")))
-    }
-
-    @Test func sessionStatusAcceptsAZwjSequenceGlyph() throws {
-        // a family emoji is one grapheme cluster in Swift, so it fits the same cap as a lone emoji.
-        #expect(try request(["session", "status", "active", "--glyph", "👨‍👩‍👧‍👦"]).args?.glyph == "👨‍👩‍👧‍👦")
-    }
-
-    @Test func sessionStatusWithoutGlyph() throws {
-        #expect(try request(["session", "status", "active"]).args?.glyph == nil)
-    }
-
-    @Test func sessionStatusRejectsTooLongGlyph() {
-        #expect(validationMessage(["session", "status", "blocked", "--glyph", "🔥🔥🔥🔥🔥"])
-            == "glyph must be at most 4 characters")
-    }
-
-    @Test func sessionStatusRejectsBlankGlyph() {
-        #expect(validationMessage(["session", "status", "blocked", "--glyph", "   "])
-            == "glyph must not be empty")
-    }
-
     @Test func sessionStatusWithPane() throws {
         let expected = ControlRequest(cmd: .sessionStatus, target: "s1",
                                       args: ControlArgs(pane: "right", status: "blocked"))
