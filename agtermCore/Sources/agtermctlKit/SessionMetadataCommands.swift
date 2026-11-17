@@ -1,4 +1,5 @@
 import ArgumentParser
+import Foundation
 import agtermCore
 
 // the `session` subcommands carrying per-session METADATA rather than driving a surface: the agent status
@@ -26,6 +27,12 @@ extension Session {
             """)
         var shape: String?
         @Option(name: .long, help: """
+            Draw this emoji/text instead of the silhouette for this call only (1-4 characters); color \
+            emojis keep their own colors, so --color does not tint them. Reverts on the next status set \
+            without it.
+            """)
+        var glyph: String?
+        @Option(name: .long, help: """
             Which pane set this status: primary/left/top, split/right/bottom, or scratch. Records the blocked \
             pane so navigation reaches it. Defaults to primary.
             """)
@@ -46,6 +53,14 @@ extension Session {
             if let shape, StatusShape(rawValue: shape) == nil {
                 throw ValidationError("shape must be one of: \(StatusShape.validNamesPhrase)")
             }
+            if let glyph {
+                let trimmed = glyph.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty { throw ValidationError("glyph must not be empty") }
+                if trimmed.count > 4 { throw ValidationError("glyph must be at most 4 characters") }
+                if trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {
+                    throw ValidationError("glyph must not contain control characters")
+                }
+            }
             try validatePaneArgument(pane)
         }
 
@@ -55,7 +70,7 @@ extension Session {
                                                                  blink: blink ? true : nil,
                                                                  autoReset: autoReset ? true : nil,
                                                                  ifIdle: ifIdle ? true : nil, sound: sound,
-                                                                 color: color, shape: shape)))
+                                                                 color: color, shape: shape, glyph: glyph)))
         }
     }
 

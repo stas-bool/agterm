@@ -11,7 +11,7 @@ extension ServerActions {
             let wasBlocked = session.agentIndicator.status == .blocked
             let pane = update.paneID.flatMap { session.paneRole(forToken: $0) } ?? update.pane
             let indicator = AgentIndicator(status: update.status, blink: update.blink ?? false, autoReset: update.autoReset ?? false,
-                                           color: update.color, shape: update.shape, statusPane: pane)
+                                           color: update.color, shape: update.shape, glyph: update.glyph, statusPane: pane)
             switch store.applyControlStatus(indicator, forSession: session.id, ifIdle: update.ifIdle) {
             case .refused(let owner):
                 return ControlResponse(ok: false, error: "blocked status owned by pane \(owner.rawValue) " +

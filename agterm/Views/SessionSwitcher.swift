@@ -210,7 +210,8 @@ struct SessionSwitcherOverlay: View {
             SessionSwitcherRow(title: store.listLabel(for: session),
                                subtitle: "\(store.workspace(forSession: id)?.name ?? "") · \(session.switcherDetail)",
                                status: session.agentIndicator.status, statusColorHex: session.agentIndicator.color,
-                               statusShape: session.agentIndicator.shape, remote: session.remoteHost != nil)
+                               statusShape: session.agentIndicator.shape, statusGlyph: session.agentIndicator.glyph,
+                               remote: session.remoteHost != nil)
                 .background(selected ? Color.accentColor.opacity(0.25) : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
         }
@@ -238,6 +239,8 @@ struct SessionSwitcherRow: View {
     var status: AgentStatus?
     var statusColorHex: String?
     var statusShape: StatusShape?
+    /// Per-call emoji/text glyph (the session's `AgentIndicator.glyph`); set draws it instead of the symbol.
+    var statusGlyph: String?
     /// Leads the title with the sidebar's cloud glyph, for a session attached from another Mac.
     var remote = false
 
@@ -265,7 +268,7 @@ struct SessionSwitcherRow: View {
             }
             Spacer(minLength: 0)
             if let status, status != .idle {
-                StatusGlyph(status: status, colorHex: statusColorHex, shape: statusShape)
+                StatusGlyph(status: status, colorHex: statusColorHex, shape: statusShape, glyph: statusGlyph)
             }
         }
         .padding(.horizontal, metrics.scaled(12))

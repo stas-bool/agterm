@@ -95,6 +95,7 @@ enum EventFormatter {
             if event.payload.blink == true { parts.append("blink") }
             if let color = event.payload.color { parts.append("color=\(color)") }
             if let shape = event.payload.shape { parts.append("shape=\(shape)") }
+            if let glyph = event.payload.glyph { parts.append("glyph=\(glyph)") }
             return parts.joined(separator: " ")
         case .notify:
             return "\(time) \(event.kind.rawValue) \(name) \(event.payload.title ?? name): \(event.payload.body ?? "")"

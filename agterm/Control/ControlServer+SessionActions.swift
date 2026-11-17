@@ -528,7 +528,7 @@ extension ControlServer: ControlActions {
         let resolvedPane = update.paneID.flatMap { session.paneRole(forToken: $0) } ?? update.pane
         let indicator = AgentIndicator(status: update.status, blink: update.blink ?? false,
                                        autoReset: update.autoReset ?? false,
-                                       color: update.color, shape: update.shape, statusPane: resolvedPane)
+                                       color: update.color, shape: update.shape, glyph: update.glyph, statusPane: resolvedPane)
         // rejected writes must return before playback: no status change means no sound.
         switch store.applyControlStatus(indicator, forSession: id, ifIdle: update.ifIdle) {
         case .refused(let owner):

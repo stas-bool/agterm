@@ -263,6 +263,20 @@ public struct ControlDispatcher {
                 }
                 shape = parsed
             }
+            var glyph: String?
+            if let raw = request.args?.glyph {
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty {
+                    return ControlResponse(ok: false, error: "invalid glyph: must not be empty")
+                }
+                if trimmed.count > 4 {
+                    return ControlResponse(ok: false, error: "invalid glyph: at most 4 characters")
+                }
+                if trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {
+                    return ControlResponse(ok: false, error: "invalid glyph: control characters not allowed")
+                }
+                glyph = trimmed
+            }
             let pane: StatusPane?
             switch parsePane(request.args?.pane) {
             case .pane(let parsed): pane = parsed
@@ -271,7 +285,7 @@ public struct ControlDispatcher {
             let update = ControlSessionStatusUpdate(status: status, blink: request.args?.blink,
                                                     autoReset: request.args?.autoReset,
                                                     sound: request.args?.sound, color: request.args?.color,
-                                                    shape: shape,
+                                                    shape: shape, glyph: glyph,
                                                     pane: pane, paneID: request.args?.paneID,
                                                     ifIdle: request.args?.ifIdle ?? false)
             return await actions.setSessionStatus(request.target, window: request.args?.window, update: update)

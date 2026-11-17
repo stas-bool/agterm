@@ -44,12 +44,13 @@ public final class PresentationHub {
 
         @MainActor func decodable(_ body: PresentationFrame.Body) -> PresentationFrame.Body {
             let accepted = PresentationHub.acceptedShapes(kinds)
-            guard accepted.count < StatusShape.allCases.count else { return body }
+            let acceptsGlyph = kinds.contains(PresentationHub.statusGlyphKind)
+            guard accepted.count < StatusShape.allCases.count || !acceptsGlyph else { return body }
             switch body {
             case .status(let status):
-                return .status(status.map { Self.withShape(in: accepted, $0) })
+                return .status(status.map { Self.withGlyph(acceptsGlyph, Self.withShape(in: accepted, $0)) })
             case .snapshot(var snapshot):
-                snapshot.status = snapshot.status.map { Self.withShape(in: accepted, $0) }
+                snapshot.status = snapshot.status.map { Self.withGlyph(acceptsGlyph, Self.withShape(in: accepted, $0)) }
                 return .snapshot(snapshot)
             default:
                 return body
@@ -62,12 +63,21 @@ public final class PresentationHub {
             status.shape = nil
             return status
         }
+
+        /// withGlyph clears a per-call emoji glyph for a viewer that cannot draw one — it renders its own
+        /// Settings shape instead, exactly like a cleared `shape`.
+        private static func withGlyph(_ accepts: Bool, _ status: PresentationStatus) -> PresentationStatus {
+            guard !accepts, status.glyph != nil else { return status }
+            var status = status
+            status.glyph = nil
+            return status
+        }
     }
 
     /// The frame kinds this origin can produce.
     public static let supportedKinds = ["status", "hud", "notify", "context", "info", "layout", "sound", askFormKind, askOtherKind,
                                         overlayPointsKind, pageContentKind, pageDocumentKind, pageLinksKind, statusShapesKind,
-                                        statusCheckmarkKind, linkClickKind, pendingSnapshotKind, jobTokenKind, pageForwardKind,
+                                        statusCheckmarkKind, statusGlyphKind, linkClickKind, pendingSnapshotKind, jobTokenKind, pageForwardKind,
                                         pageTextKind]
                                         + pageKinds + pickKinds
     /// pageKinds are the presentation kinds a presenter must speak to be handed a page.
@@ -104,6 +114,9 @@ public final class PresentationHub {
     public static let statusShapesKind = "status.shapes"
     /// statusCheckmarkKind advertises `StatusShape.checkmark`, added after `status.shapes` shipped.
     public static let statusCheckmarkKind = "status.checkmark"
+    /// statusGlyphKind advertises per-call emoji/text glyphs (`session.status --glyph`), added after
+    /// `status.checkmark`; a viewer without it has the glyph cleared and draws its own shape instead.
+    public static let statusGlyphKind = "status.glyph"
 
     /// acceptedShapes is the shape set a viewer advertising `kinds` decodes; a shape outside it is cleared, and
     /// that viewer draws its own Settings shape instead.

@@ -171,17 +171,24 @@ public struct AgentIndicator: Equatable, Sendable {
     /// shape, when set, overrides the Settings-configured silhouette for this glyph only, discarded like
     /// `color`. nil falls back to the Settings shape, else the default plain circle.
     public var shape: StatusShape?
+    /// glyph, when set, is a per-call emoji/text override drawn INSTEAD of the SF-Symbol silhouette (and
+    /// instead of the Settings shape), discarded like `color`/`shape` on the next plain `session.status`.
+    /// Color emojis keep their own colors, so a `color` tint does not apply to it. Validated by the
+    /// dispatcher and the CLI to 1...4 grapheme clusters with no control characters.
+    public var glyph: String?
     /// statusPane records which pane set this status; nil is unspecified and treated as `.left` (main) by the
     /// clear logic.
     public var statusPane: StatusPane?
 
     public init(status: AgentStatus = .idle, blink: Bool = false, autoReset: Bool = false,
-                color: String? = nil, shape: StatusShape? = nil, statusPane: StatusPane? = nil) {
+                color: String? = nil, shape: StatusShape? = nil, glyph: String? = nil,
+                statusPane: StatusPane? = nil) {
         self.status = status
         self.blink = blink
         self.autoReset = autoReset
         self.color = color
         self.shape = shape
+        self.glyph = glyph
         self.statusPane = statusPane
     }
 

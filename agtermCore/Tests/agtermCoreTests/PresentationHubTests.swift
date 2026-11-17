@@ -166,6 +166,10 @@ struct PresentationHubTests {
         PresentationStatus(status: .blocked, blink: true, color: "#ff8800", shape: shape, pane: .scratch, changedAt: 42)
     }
 
+    static func status(glyph: String?) -> PresentationStatus {
+        PresentationStatus(status: .blocked, blink: true, color: "#ff8800", shape: .circle, glyph: glyph, pane: .scratch, changedAt: 42)
+    }
+
     @Test(arguments: StatusShape.allCases)
     func oneStatusReachesEachViewerWithOnlyAShapeItDecodes(shape: StatusShape) throws {
         let hub = makeHub()
@@ -233,6 +237,34 @@ struct PresentationHubTests {
 
         #expect(sink.bodies == [.hello(Self.checkmarkHello), .snapshot(snapshot)])
         #expect(PresentationHub.supportedKinds.contains(PresentationHub.statusCheckmarkKind))
+    }
+
+    static let glyphHello = PresentationHello(version: 1, kinds: checkmarkHello.kinds + [PresentationHub.statusGlyphKind],
+                                               mode: .mirror)
+
+    @Test func aViewerWithoutTheGlyphKindGetsTheSnapshotAndAHeldDeltaWithoutTheGlyph() throws {
+        let hub = makeHub()
+        let sink = Sink()
+        let snapshot = PresentationSnapshot(status: Self.status(glyph: "🔥"), hud: nil, context: "build")
+
+        try hub.subscribe(session: Self.session, hello: Self.checkmarkHello, sink: sink) {
+            hub.publish(.status(Self.status(glyph: "🚀")), session: Self.session)
+            return snapshot
+        }
+
+        let expected = PresentationSnapshot(status: Self.status(glyph: nil), hud: nil, context: "build")
+        #expect(sink.bodies == [.hello(Self.checkmarkHello), .snapshot(expected), .status(Self.status(glyph: nil))])
+    }
+
+    @Test func aViewerAdvertisingTheGlyphKindGetsTheSnapshotUnchanged() throws {
+        let hub = makeHub()
+        let sink = Sink()
+        let snapshot = PresentationSnapshot(status: Self.status(glyph: "🔥"), hud: nil)
+
+        try hub.subscribe(session: Self.session, hello: Self.glyphHello, sink: sink) { snapshot }
+
+        #expect(sink.bodies == [.hello(Self.glyphHello), .snapshot(snapshot)])
+        #expect(PresentationHub.supportedKinds.contains(PresentationHub.statusGlyphKind))
     }
 
     @Test func theAnswerAdvertisesOnlyKindsBothSidesSpeak() throws {

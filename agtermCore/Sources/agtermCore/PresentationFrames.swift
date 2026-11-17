@@ -54,16 +54,19 @@ public struct PresentationStatus: Codable, Equatable, Sendable {
     public var blink: Bool
     public var color: String?
     public var shape: StatusShape?
+    /// Per-call emoji/text glyph drawn instead of the silhouette; a viewer without `status.glyph` clears it.
+    public var glyph: String?
     public var pane: PresentationPane?
     /// Epoch seconds on the origin's clock.
     public var changedAt: Double?
 
-    public init(status: AgentStatus, blink: Bool, color: String?, shape: StatusShape?, pane: PresentationPane?,
-                changedAt: Double?) {
+    public init(status: AgentStatus, blink: Bool, color: String?, shape: StatusShape?, glyph: String? = nil,
+                pane: PresentationPane?, changedAt: Double?) {
         self.status = status
         self.blink = blink
         self.color = color
         self.shape = shape
+        self.glyph = glyph
         self.pane = pane
         self.changedAt = changedAt
     }

@@ -263,6 +263,10 @@ public struct ControlArgs: Codable, Sendable, Equatable {
     /// (`StatusShape.validNamesList`), dispatcher-validated. Rides the ephemeral indicator,
     /// lasting until the next `session.status` without a shape; nil = the Settings shape, else a circle.
     public var shape: String?
+    /// The per-call emoji/text glyph override for `session.status`, drawn instead of the silhouette;
+    /// dispatcher-validated to 1...4 grapheme clusters with no control characters. Rides the ephemeral
+    /// indicator like `shape`/`color`, lasting until the next `session.status` without a glyph.
+    public var glyph: String?
     /// The `background-image-opacity` for `session.background` (image + text), 0...1; nil = ghostty's 1.0.
     public var opacity: Double?
     /// The `background-image-fit` for `session.background` (`contain|cover|stretch|none`); nil = `contain`.
@@ -526,7 +530,7 @@ public struct ControlArgs: Codable, Sendable, Equatable {
                 width: Int? = nil, height: Int? = nil, sidebarWidth: Double? = nil, x: Int? = nil, y: Int? = nil, display: Int? = nil,
                 status: String? = nil, blink: Bool? = nil, autoReset: Bool? = nil, ifIdle: Bool? = nil, sound: String? = nil,
                 ratio: Double? = nil, ratioDelta: Double? = nil,
-                path: String? = nil, color: String? = nil, textColor: String? = nil, shape: String? = nil,
+                path: String? = nil, color: String? = nil, textColor: String? = nil, shape: String? = nil, glyph: String? = nil,
                 opacity: Double? = nil, fit: String? = nil,
                 position: String? = nil, repeats: Bool? = nil, all: Bool? = nil, lines: Int? = nil,
                 light: String? = nil, dark: String? = nil,
@@ -607,6 +611,7 @@ public struct ControlArgs: Codable, Sendable, Equatable {
         self.color = color
         self.textColor = textColor
         self.shape = shape
+        self.glyph = glyph
         self.opacity = opacity
         self.fit = fit
         self.position = position

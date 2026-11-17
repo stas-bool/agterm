@@ -39,7 +39,7 @@ extension AppStore {
         guard let session = session(withID: id), session.remotePresentation != nil else { return }
         let owner = status.map { localStatusPane($0.pane, in: session) }
         let indicator = status.map {
-            AgentIndicator(status: $0.status, blink: $0.blink, color: $0.color, shape: $0.shape,
+            AgentIndicator(status: $0.status, blink: $0.blink, color: $0.color, shape: $0.shape, glyph: $0.glyph,
                            statusPane: owner?.pane)
         } ?? AgentIndicator()
         setAgentIndicator(indicator, forSession: id)

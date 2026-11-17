@@ -101,7 +101,7 @@ extension AppStore {
         let indicator = session.agentIndicator
         guard indicator.status != .idle else { return nil }
         return PresentationStatus(status: indicator.status, blink: indicator.blink, color: indicator.color,
-                                  shape: indicator.shape,
+                                  shape: indicator.shape, glyph: indicator.glyph,
                                   pane: presentationStatusPane(indicator.statusPane, of: session),
                                   changedAt: session.statusChangedAt?.timeIntervalSince1970)
     }
