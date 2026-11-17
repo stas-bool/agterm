@@ -57,7 +57,8 @@ extension Session {
                 let trimmed = glyph.trimmingCharacters(in: .whitespacesAndNewlines)
                 if trimmed.isEmpty { throw ValidationError("glyph must not be empty") }
                 if trimmed.count > 4 { throw ValidationError("glyph must be at most 4 characters") }
-                if trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {
+                // Cf scalars (ZWJ inside composed emoji) are fine — only Cc control scalars are rejected
+                if trimmed.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) {
                     throw ValidationError("glyph must not contain control characters")
                 }
             }

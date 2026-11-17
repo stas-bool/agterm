@@ -272,7 +272,9 @@ public struct ControlDispatcher {
                 if trimmed.count > 4 {
                     return ControlResponse(ok: false, error: "invalid glyph: at most 4 characters")
                 }
-                if trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {
+                // ZWJ (U+200D) is a FORMAT (Cf) scalar and the backbone of composed emoji, so only true
+                // control scalars (Cc: \n, NUL, ESC...) are rejected — not all of CharacterSet.controlCharacters
+                if trimmed.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) {
                     return ControlResponse(ok: false, error: "invalid glyph: control characters not allowed")
                 }
                 glyph = trimmed
