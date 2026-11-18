@@ -2,6 +2,8 @@
 
 Let two coding agents in one agterm split talk to each other through agterm's pane mailboxes.
 
+Author: [@umputun](https://github.com/umputun)
+
 ## What it does
 
 Two agents run side by side in a split session, one per pane, and talk to each other directly: Claude Code and Codex, or two of the same kind. You watch both halves of the exchange without relaying anything by hand. The value is disagreement: an agent working alone accepts its own reasoning, while a second one with its own context attacks it first, whether the subject is a plan, a diff, a bug or a long investigation.
@@ -98,6 +100,8 @@ Mail that is not from this recipe, such as a `msg send` from a script, is delive
 **Another program that consumes a Claude pane's mail competes with the hook.** One that removes messages with `msg read --ack` or `msg ack` can take a message before the hook sees it.
 
 **Codex can take mail only after its first prompt.** Codex registers a conversation on its first prompt, not at launch, which is why the launch line in *Setup* includes the READY prompt. A Codex started without one reports `receiver: none`, and its mail waits until you prompt it. After `/clear`, mail still goes to the cleared conversation until you give the new one a prompt, so give it one before the chat continues.
+
+**A Codex on the shared background server cannot chat.** Without `--no-daemon`, Codex can run its hooks and commands in a shared app-server that carries the ids of the pane that started it. The script refuses to act from that server: it registers no thread there and ignores a registration it made earlier, so that Codex reports `receiver: none` and its mail waits, and `say`, `status` and `deliver` run under it exit with an error naming `--no-daemon`. Restart that Codex with the launch line from *Setup*.
 
 **Never put a topic on an agent's command line.** Duplicate as Companion starts each pane's program again with the same command line, so `claude "chat with codex about the retry bug"` in a pane makes the copy start that chat too, unasked. Ask in the pane instead. The Codex launch line in *Setup* is safe to copy: its READY prompt carries no topic.
 

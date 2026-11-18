@@ -13,6 +13,10 @@ public struct ControlDispatcher {
     }
 
     public func dispatch(_ request: ControlRequest) async -> ControlResponse? {
+        // a receipt the host never keeps would read as a durable answer
+        if request.args?.opID != nil, !actions.takesOperationReceipts {
+            return ControlResponse(ok: false, error: "operation receipts are served only by agterm-server")
+        }
         switch request.cmd {
         case .tree:
             return actions.controlTree(window: request.args?.window)
@@ -32,11 +36,12 @@ public struct ControlDispatcher {
                 .sessionOverlayClose, .sessionOverlayResize, .sessionOverlayReload, .sessionOverlayNavigate,
                 .sessionOverlayResult, .sessionOverlaySubmit, .sessionOverlayCopy, .sessionOverlayText,
                 .sessionOverlayHide, .sessionOverlayShow, .sessionOverlayToggle, .sessionOverlayFollow,
-                .sessionOverlaySearch, .sessionBackground, .sessionText:
+                .sessionOverlaySearch, .sessionOverlayChanges, .sessionOverlayWrap, .sessionBackground, .sessionText:
             return await dispatchSessionSurfaceCommand(request)
         case .sessionOverlayJobRun, .sessionOverlayPageServe:
             return dispatchSessionOverlayCommand(request)
-        case .sessionCompanionNew, .sessionCompanionPage, .sessionCompanionDuplicate, .sessionCompanionPageAttach, .sessionCollapse, .sessionExpand:
+        case .sessionCompanionNew, .sessionCompanionPage, .sessionPage, .sessionCompanionDuplicate, .sessionCompanionConvert,
+                .sessionCompanionPageAttach, .sessionCollapse, .sessionExpand:
             return await dispatchCompanionCommand(request)
         case .workspaceNew, .workspaceSelect, .workspaceGo, .workspaceRename, .workspaceDelete,
                 .workspaceMove, .workspaceFocus, .workspaceFilter, .workspaceCollapse, .workspaceExpand,
@@ -48,6 +53,20 @@ public struct ControlDispatcher {
             return dispatchAppCommand(request)
         case .restoreMode, .zmxList, .zmxPrune, .zmxKill, .zmxReset, .zmxTree, .zmxAttach, .zmxAttachGroup, .zmxPresent, .zmxScreen:
             return await dispatchZmxCommand(request)
+        case .sessionDetach, .sessionReattach, .workspaceDetach, .workspaceReattach, .windowRemoteDismiss:
+            return dispatchDetachCommand(request)
+        case .catalogSubscribe:
+            return actions.catalogSubscribe()
+        case .catalogOp:
+            guard let opID = request.target?.trimmedOrNil, CatalogReceipt.isValidOpID(opID) else {
+                return ControlResponse(ok: false, error: "catalog.op requires an operation id")
+            }
+            let epoch = request.args?.epoch?.trimmedOrNil
+            let rev = request.args?.rev
+            guard (epoch == nil) == (rev == nil) else {
+                return ControlResponse(ok: false, error: "catalog.op takes epoch and rev together")
+            }
+            return actions.catalogOperation(opID, sent: epoch.flatMap { epoch in rev.map { CatalogPosition(epoch: epoch, rev: $0) } })
         case .hooksReload, .hooksList:
             return dispatchHooksCommand(request)
         case .recentList, .recentOpen, .recentClear:
@@ -57,7 +76,8 @@ public struct ControlDispatcher {
         case .quickType, .quickText:
             return await dispatchQuickCommand(request)
         case .windowNew, .windowList, .windowSelect, .windowGo, .windowClose, .windowRename,
-                .windowDelete, .windowResize, .windowMove, .windowZoom, .windowFullscreen, .windowMinimize:
+                .windowDelete, .windowResize, .windowMove, .windowZoom, .windowFullscreen, .windowMinimize,
+                .windowRemoteOpen:
             return await dispatchWindowCommand(request)
         case .dashboard:
             return dispatchDashboard(request)
@@ -112,6 +132,53 @@ public struct ControlDispatcher {
         return actions.readEvents(ControlEventReadOptions(cursor: cursor, kinds: kinds, limit: limit))
     }
 
+    /// The `session.status` argument surface: status/color/shape/glyph/pane validation and the update.
+    /// A method of its own, like `dispatchSessionFlag`: `dispatchSessionCommand`'s switch sits at
+    /// swiftlint's cyclomatic-complexity cap, and the per-call overrides only grew it.
+    private func dispatchSessionStatus(_ request: ControlRequest) async -> ControlResponse {
+        guard let status = AgentStatus(rawValue: request.args?.status ?? "") else {
+            return ControlResponse(ok: false, error: "invalid status")
+        }
+        if let color = request.args?.color, !WatermarkConfig.isValidColorHex(color) {
+            return ControlResponse(ok: false, error: "invalid color (expected #rrggbb)")
+        }
+        var shape: StatusShape?
+        if let raw = request.args?.shape {
+            guard let parsed = StatusShape(rawValue: raw) else {
+                return ControlResponse(ok: false, error: "invalid shape: \(raw) (\(StatusShape.validNamesList))")
+            }
+            shape = parsed
+        }
+        var glyph: String?
+        if let raw = request.args?.glyph {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                return ControlResponse(ok: false, error: "invalid glyph: must not be empty")
+            }
+            if trimmed.count > 4 {
+                return ControlResponse(ok: false, error: "invalid glyph: at most 4 characters")
+            }
+            // ZWJ (U+200D) is a FORMAT (Cf) scalar and the backbone of composed emoji, so only true
+            // control scalars (Cc: \n, NUL, ESC...) are rejected — not all of CharacterSet.controlCharacters
+            if trimmed.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) {
+                return ControlResponse(ok: false, error: "invalid glyph: control characters not allowed")
+            }
+            glyph = trimmed
+        }
+        let pane: StatusPane?
+        switch parsePane(request.args?.pane) {
+        case .pane(let parsed): pane = parsed
+        case .rejected(let rejection): return rejection
+        }
+        let update = ControlSessionStatusUpdate(status: status, blink: request.args?.blink,
+                                                autoReset: request.args?.autoReset,
+                                                sound: request.args?.sound, color: request.args?.color,
+                                                shape: shape, glyph: glyph,
+                                                pane: pane, paneID: request.args?.paneID,
+                                                ifIdle: request.args?.ifIdle ?? false)
+        return await actions.setSessionStatus(request.target, window: request.args?.window, update: update)
+    }
+
     private func dispatchSessionCommand(_ request: ControlRequest) async -> ControlResponse {
         switch request.cmd {
         case .sessionNew:
@@ -159,7 +226,7 @@ public struct ControlDispatcher {
             return actions.selectSession(request.target, window: request.args?.window)
         case .sessionGo:
             guard let dir = (request.args?.to).flatMap(SessionNavigation.init(wire:)) else {
-                return ControlResponse(ok: false, error: "session.go requires --to next|prev|first|last|next-attention|prev-attention")
+                return ControlResponse(ok: false, error: "session.go requires --to next|prev|first|last|next-attention|prev-attention|N")
             }
             return actions.goSession(window: request.args?.window, direction: dir)
         case .sessionClose:
@@ -230,30 +297,7 @@ public struct ControlDispatcher {
         case .sessionSeen:
             return actions.markSessionSeen(request.target, window: request.args?.window)
         case .sessionStatus:
-            guard let status = AgentStatus(rawValue: request.args?.status ?? "") else {
-                return ControlResponse(ok: false, error: "invalid status")
-            }
-            if let color = request.args?.color, !WatermarkConfig.isValidColorHex(color) {
-                return ControlResponse(ok: false, error: "invalid color (expected #rrggbb)")
-            }
-            var shape: StatusShape?
-            if let raw = request.args?.shape {
-                guard let parsed = StatusShape(rawValue: raw) else {
-                    return ControlResponse(ok: false, error: "invalid shape: \(raw) (\(StatusShape.validNamesList))")
-                }
-                shape = parsed
-            }
-            let pane: StatusPane?
-            switch parsePane(request.args?.pane) {
-            case .pane(let parsed): pane = parsed
-            case .rejected(let rejection): return rejection
-            }
-            let update = ControlSessionStatusUpdate(status: status, blink: request.args?.blink,
-                                                    autoReset: request.args?.autoReset,
-                                                    sound: request.args?.sound, color: request.args?.color,
-                                                    shape: shape,
-                                                    pane: pane, paneID: request.args?.paneID)
-            return await actions.setSessionStatus(request.target, window: request.args?.window, update: update)
+            return await dispatchSessionStatus(request)
         case .sessionRestore:
             return dispatchSessionRestore(request)
         default:
@@ -421,9 +465,15 @@ public struct ControlDispatcher {
                                                text: request.args?.text, to: request.args?.to)
         case .sessionOverlaySearch:
             return await dispatchSessionOverlaySearch(request)
+        case .sessionOverlayChanges:
+            return await dispatchSessionOverlayChanges(request)
+        case .sessionOverlayFollow:
+            return await dispatchSessionOverlayFollow(request)
+        case .sessionOverlayWrap:
+            return await dispatchSessionOverlayWrap(request)
         case .sessionOverlayOpen, .sessionOverlayClose, .sessionOverlayResize, .sessionOverlayReload,
              .sessionOverlayNavigate, .sessionOverlayResult, .sessionOverlaySubmit, .sessionOverlayCopy,
-             .sessionOverlayText, .sessionOverlayHide, .sessionOverlayShow, .sessionOverlayToggle, .sessionOverlayFollow:
+             .sessionOverlayText, .sessionOverlayHide, .sessionOverlayShow, .sessionOverlayToggle:
             return dispatchSessionOverlayCommand(request)
         case .sessionBackground:
             return dispatchSessionBackground(request)
@@ -684,6 +734,14 @@ public struct ControlDispatcher {
                 return ControlResponse(ok: false, error: "invalid window minimize mode: \(request.args?.mode ?? "toggle")")
             }
             return await actions.windowMinimize(request.target, mode: mode)
+        case .windowRemoteOpen:
+            guard let host = request.args?.host?.trimmedOrNil else {
+                return ControlResponse(ok: false, error: "window.remote.open requires a host")
+            }
+            guard RemoteSession.isHost(host) else {
+                return ControlResponse(ok: false, error: "window.remote.open: not a host ssh can be given")
+            }
+            return await actions.windowRemoteOpen(host: host)
         default:
             preconditionFailure("unexpected window command: \(request.cmd.rawValue)")
         }

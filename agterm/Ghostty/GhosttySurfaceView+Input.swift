@@ -55,7 +55,8 @@ extension GhosttySurfaceView {
         guard !PaneLead.consumes(event, in: self) else { return }
         // every keystroke is user activity: reset the auto-follow idle timer UNCONDITIONALLY, not gated on
         // the status-clear below, else typing in an idle session yanks the user to a blocked one mid-type.
-        onUserInput?()
+        let keystroke = classifyKeystroke(event)
+        onUserInput?(keystroke)
         // a keystroke clears an attention glyph to idle: blocked/completed as the Status reset setting says,
         // active ONLY on an interrupt (Escape or Ctrl-C), so typing while the agent works keeps the "working"
         // glyph but cancelling a pending prompt drops it. Claude Code treats Ctrl-C like Esc for dismissing a
@@ -64,7 +65,7 @@ extension GhosttySurfaceView {
         // UNCONDITIONALLY with the classified key: the pane-scoped decision belongs to AgentIndicator.clearedBy,
         // so the scratch (no view.session) self-clears too and a background pane's block survives foreground
         // typing.
-        onUserInputClearsStatus?(classifyKeystroke(event))
+        onUserInputClearsStatus?(keystroke)
         let action: ghostty_input_action_e = event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
@@ -139,7 +140,7 @@ extension GhosttySurfaceView {
         var ke = buildKeyEvent(from: event, action: isFlagPress(event) ? GHOSTTY_ACTION_PRESS : GHOSTTY_ACTION_RELEASE)
         ke.text = nil
         _ = ghostty_surface_key(surface, ke)
-        guard clickIntent(event) != .normal, NSEvent.pressedMouseButtons == 0,
+        guard clickIntent(event) != .normal, !mouseButtonsDown(),
               let point = lastReportedMousePoint, point.x >= 0, point.y >= 0 else { return }
         refreshLinkHover(at: point, with: event)
     }
@@ -306,7 +307,7 @@ extension GhosttySurfaceView {
     /// ⌘-hovered link stays highlighted after the mouse leaves the terminal until ⌘ is released. Skipped
     /// mid-drag (a button down) so a selection crossing the edge isn't reported at `-1, -1`.
     override func mouseExited(with event: NSEvent) {
-        guard let surface, NSEvent.pressedMouseButtons == 0 else { return }
+        guard let surface, !mouseButtonsDown() else { return }
         pointerInside = false
         ghostty_surface_mouse_pos(surface, -1, -1, mods(event))
         lastReportedMousePoint = NSPoint(x: -1, y: -1)
@@ -635,16 +636,24 @@ extension GhosttySurfaceView: @preconcurrency NSTextInputClient {
         }
     }
 
-    /// Acts on a clicked terminal link (`GHOSTTY_ACTION_OPEN_URL`); the scheme/host decision lives in the
-    /// host-free `LinkPolicy`. A `file://` link is REVEALED in Finder, never opened — reveal executes nothing.
+    /// openLink acts on a clicked terminal link (`GHOSTTY_ACTION_OPEN_URL`); what happens to it is the host-free
+    /// `LinkPolicy`'s decision.
     func openLink(_ raw: String, intent: LinkPolicy.ClickIntent) {
-        LinkOpener.shared.follow(raw, from: linkClickOrigin, cwd: linkClickCwd, intent: intent)
+        LinkOpener.shared.follow(raw, from: linkClickOrigin, pane: linkClickPane, cwd: linkClickCwd, intent: intent)
     }
 
-    /// The directory a relative link names a file in: this pane's reported cwd. Nil for the scratch, quick and
-    /// overlay terminals, whose own directory the app does not track, so a relative link there stays ignored.
+    /// linkClickPane is the identity of the pane this surface shows, nil for a surface no session pane owns.
+    var linkClickPane: UUID? {
+        session.flatMap { isSplitPane ? $0.splitPaneIdentity : $0.paneIdentity }
+    }
+
+    /// The directory a relative link names a file in: this pane's reported cwd, a local scratch's included. Nil
+    /// for a remote window's scratch, whose directory is on the server, and for the quick and overlay
+    /// terminals, whose own directory the app does not track, so a relative link there stays ignored.
     var linkClickCwd: String? {
-        session.map { isSplitPane ? $0.cwd(for: .right) : $0.effectiveCwd }
+        if let session { return isSplitPane ? session.cwd(for: .right) : session.effectiveCwd }
+        guard let owner = scratchOwner, owner.catalogScratch == nil else { return nil }
+        return owner.cwd(for: .scratch)
     }
 
     /// Which kind of surface a clicked link came from, read off the ownership each factory already sets.

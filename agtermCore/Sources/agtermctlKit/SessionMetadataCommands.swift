@@ -1,4 +1,5 @@
 import ArgumentParser
+import Foundation
 import agtermCore
 
 // the `session` subcommands carrying per-session METADATA rather than driving a surface: the agent status
@@ -9,6 +10,8 @@ extension Session {
         @Argument(help: "State: idle, active, completed, or blocked.") var state: String
         @Flag(name: .long, help: "Pulse the indicator for attention.") var blink = false
         @Flag(name: .long, help: "Reset the indicator to idle once the session is visited.") var autoReset = false
+        @Flag(name: .long, help: "Apply only while the session's status is idle; otherwise leave it unchanged.")
+        var ifIdle = false
         @Option(name: .long, help: """
             Play a sound when set: 'default' (or 'beep') for the system alert sound, or a system sound \
             name (Basso, Blow, Bottle, Frog, Funk, Glass, Hero, Morse, Ping, Pop, Purr, Sosumi, \
@@ -23,6 +26,12 @@ extension Session {
             reverts on the next status set without it.
             """)
         var shape: String?
+        @Option(name: .long, help: """
+            Draw this emoji/text instead of the silhouette for this call only (1-4 characters); color \
+            emojis keep their own colors, so --color does not tint them. Reverts on the next status set \
+            without it.
+            """)
+        var glyph: String?
         @Option(name: .long, help: """
             Which pane set this status: primary/left/top, split/right/bottom, or scratch. Records the blocked \
             pane so navigation reaches it. Defaults to primary.
@@ -44,6 +53,15 @@ extension Session {
             if let shape, StatusShape(rawValue: shape) == nil {
                 throw ValidationError("shape must be one of: \(StatusShape.validNamesPhrase)")
             }
+            if let glyph {
+                let trimmed = glyph.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmed.isEmpty { throw ValidationError("glyph must not be empty") }
+                if trimmed.count > 4 { throw ValidationError("glyph must be at most 4 characters") }
+                // Cf scalars (ZWJ inside composed emoji) are fine — only Cc control scalars are rejected
+                if trimmed.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) {
+                    throw ValidationError("glyph must not contain control characters")
+                }
+            }
             try validatePaneArgument(pane)
         }
 
@@ -51,8 +69,9 @@ extension Session {
             ControlRequest(cmd: .sessionStatus, target: target.target,
                            args: options.withWindow(ControlArgs(pane: pane, paneID: paneID, status: state,
                                                                  blink: blink ? true : nil,
-                                                                 autoReset: autoReset ? true : nil, sound: sound,
-                                                                 color: color, shape: shape)))
+                                                                 autoReset: autoReset ? true : nil,
+                                                                 ifIdle: ifIdle ? true : nil, sound: sound,
+                                                                 color: color, shape: shape, glyph: glyph)))
         }
     }
 

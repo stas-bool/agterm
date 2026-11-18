@@ -1,5 +1,129 @@
 # Changelog
 
+## v0.42.3 - 2026-11-13
+
+### Bug Fixes
+
+- **Switching to or from a left/right split session with the compact toolbar no longer flickers at the top.** Every switch resized both panes by about two rows, so the shells redrew and a stale frame showed under the titlebar; the panes now keep their size. A top/bottom split can still jump its divider for one frame when shown #995 @umputun
+- an unnamed session on an agterm-server host, shown in a remote window, kept its directory name as the sidebar label and window title instead of following the terminal title. It follows the title once both the server and the app are updated #993 @umputun #991
+
+## v0.42.2 - 2026-11-13
+
+### Bug Fixes
+
+- **Live sessions no longer close when macOS force-quits a program started in one.** A GUI program switched off in System Settings ▸ General ▸ Login Items ▸ Allow in the Background, started from a live session after agterm had been quit and opened again, was force-quit by macOS about 30 seconds later, and the live sessions macOS had grouped with it closed too. On macOS 27 and later agterm starts the session host as its own background job, so the force-quit reaches only the program. Sessions started before this update keep their old host until Agterm ▸ Reset Live Sessions… moves them #987 @umputun #985
+- with the keyboard layout lock on, layout switches made in another app were reverted to the locked layout, and leaving agterm did not restore the earlier one. The lock now holds only while agterm is the active app #988 @umputun
+- on macOS 15 the Claude status hook handled every main-agent event as a subagent's, so a row showing blocked or completed stayed that way after Claude went back to work, and a Stop while a background subagent ran showed completed. Reinstall from Help ▸ Install Agent Status Hooks to pick it up 5cc32465 @umputun #990
+
+## v0.42.1 - 2026-11-12
+
+### Improved
+
+- **Log pages and text-page controls on remote sessions.** A log ⌘-clicked in a session attached from another Mac opens as a log page there, and Follow, search, Wrap and change steps work on it as on a local page. `session overlay follow|search|wrap|changes` from the origin reach the page on the presenting Mac; a Mac on 0.42.0 gets the plain text page and refuses those controls. agterm-server serves log pages too, and its page rows show in a Mac's remote window #978 @umputun
+- a custom command run from the scratch terminal gets the scratch shell's own directory in `AGT_SESSION_PWD`, where it used to get the main pane's. Relative links in a local scratch resolve against that directory, and `tree` reads it back as `scratchCwd` #981 @umputun
+- `remote-session-restore` cookbook recipe: re-attaches sessions from other Macs into the workspaces they were in after a relaunch #973 @maxshevelev
+
+### Bug Fixes
+
+- after an update, new Live panes were still started by the old session host, so Local Network access failed in them; after a forced logout, new panes failed with `No user exists for uid 501`. A changed helper build or a new login now gets its own host, and Reset Live Sessions moves running panes onto it #972 @umputun #971
+- on an agterm-server Linux host, installing the agent status hooks left the hook wrappers without their executable bit, so status reporting failed #974 @Romancha
+- installing the agent status hooks on an agterm-server Linux host made a chmod 600 `.zshrc`, `.bashrc` or `config.fish` world-readable f52cb2bf @umputun
+- `mailbox-chat` recipe: under a Codex started without `--no-daemon`, mail for the starting pane went to whichever Codex thread started last. Such a Codex now refuses with an error naming `--no-daemon` #979 @umputun
+- `annotate-document` recipe: pages stopped painting on macOS 26 WebKit, and long inline code ran past the page edge b7316f1c fc6178b8 @umputun
+
+## v0.42.0 - 2026-11-11
+
+### New Features
+
+- **agterm-server runs sessions on a Linux host (experimental).** A headless agterm built from the same core serves the control API on the host, and sessions and agents run there as zmx daemons, so they keep running when the Mac sleeps, the network drops or the window closes. File ▸ Open Remote Window or `agtermctl window remote open HOST` shows the host's sessions in a window whose sidebar mirrors the server; status, HUD, asks, pickers and pages draw on the Mac. Closing a remote row offers Detach or Terminate, and File ▸ Detached Sessions brings a detached row back. `agtermctl server install HOST` installs the matching release over ssh and checks it against a checksum sealed into the app. The host needs systemd with a user manager, and one Mac per server is supported #949 @umputun
+- **An HTML page can be a session of its own.** `agtermctl session overlay open --html FILE --page` (or `--url`) creates a top-level page row that holds companions like any session. Page rows are saved and restored in every restart mode, Recent Closed brings a page group back whole, and another Mac can attach a page with its companions #930 @umputun
+- **Markdown pages follow local links.** A ⌘-clicked markdown file follows relative links to neighbouring `.md` and `.markdown` files, with back and forward returning to the previous file at its scroll position. Links stay inside the first file's folder, and a file directly in `/` or the home folder keeps links as text. `session overlay open --markdown FILE --navigation` is the control form, and a page shown for another Mac follows its links too #931 @umputun
+- **Convert to Companion.** A fresh shell takes a running session's sidebar slot and directory, and the session moves under it as a companion, still running, with its own companions and still selected. It is in the Session menu, the row menu, the palette, the `convert_companion` keymap action and `agtermctl session convert --companion` #926 @umputun
+- text, log and diff pages wrap long lines: the Wrap button in the bar or `w` toggles it per page. `session overlay wrap on|off|toggle` is the control form and `htmlOverlays[].text.wrap` reads it back #934 @umputun
+- an `agterm://session/<id>` terminal link selects that session on ⌘-click, so an agent can print a "back to this session" link. In a session attached from another Mac the id is that Mac's and selects the matching attached row; an unknown id does nothing #964 @arogulin
+- `agtermctl session go --to N` selects the Nth session in sidebar order, the order next and previous walk #953 @nkt
+- typing in a session clears its unseen badge. Settings ▸ Notifications ▸ Badge reset picks On first key (default), On Enter or Disabled; `session type` input never clears it #960 @umputun
+- a checkmark agent-status shape, in Settings and through `session status --shape checkmark`. A Mac on 0.41.x that attached the session draws its own Settings shape for it #947 @umputun
+- a ⌘-click on a file path in a session attached from another Mac opens the picture, markdown, text or HTML page from that Mac, shown here. A click that Mac refuses shows a short panel saying why #923 @umputun
+- `agtermctl pick --session S` binds a picker to a session, so it shows wherever that session is presented, a Mac attaching it included. `pick --timeout SEC` and `ask open --timeout SEC` cancel a picker or dialog left unanswered #949 @umputun
+- `tree` and the `remote.opened` / `remote.closed` events report `remoteSessionID`, the origin's id of an attached row, so a hook can re-attach the same sessions after a relaunch #937 @maxshevelev
+- `project-session-picker` cookbook recipe: a Television picker that focuses a matching session or opens a zoxide folder in a new one #944 #950 @sysradium
+- `annotate-in-plannotator-tui` cookbook recipe: annotate pane output or Claude's replies in plannotator-tui and paste the notes back into the session #936 #946 @pySilver
+- `multi-agent-git-info` cookbook recipe: Claude Code and Codex sharing a session publish one combined Git info line #922 #927 @megabyde
+
+### Improved
+
+- Claude's status row stays active while background subagents or workflows run, and a subagent's tool activity no longer overwrites a status main posted. Holding the row at `Stop` needs Claude Code 2.1.145 or later; existing installs pick it up after Help ▸ Install Agent Status Hooks. `session status --if-idle` sets a status only on an idle row #959 @umputun
+- idle `agtermctl events`, `session wait` and `msg read --wait` followers cost the app far less CPU: with 20 of them, `events` dropped from 17.9% to 5.6% of a core #955 @umputun
+- Settings ▸ Key Mapping ▸ Lock in terminals is now **Lock in agterm** and holds the layout in every agterm window, including the palette, pickers, dialogs, the find bar and rename fields. Typing another language in those fields needs the lock off #925 @umputun
+- a click on a workspace row's icon folds or unfolds it at once, like the disclosure triangle, instead of after the double-click delay #952 @umputun
+- with "Current session's directory", a new session from another workspace's row takes its folder from that workspace's most recent session, not from the selected session elsewhere #873 @NaikSoftware
+- the Help and welcome installers put Codex skills and hooks under `CODEX_HOME` when it is set #905 @fAntel
+- the docs no longer say `--command` skips shell expansion: with fresh shells or Re-run, quotes, `$VAR`, redirects, pipes and globs work, and Live sessions run the whole line in the pane's shell #965 @umputun
+
+### Bug Fixes
+
+- the color scheme query answered light on a dark Mac when one theme served both appearances, and with theme sync off, mode 2031 programs got no report on an appearance flip #961 @umputun #939
+- double-clicking a session name to rename it could hang agterm #924 @bot-rogerthat
+- a text or log page showed a log's terminal color codes as literal text; it now renders their colors and drops other escape sequences #951 @umputun
+- Re-run sent doubled or trailing backslashes to fish with different bytes #967 @alexandru-savinov
+- Re-run typed a command containing `!` into csh or tcsh, which expand history even inside single quotes; such a pane now starts a plain shell #970 @umputun
+- an apostrophe followed by a combining mark or emoji modifier was left unescaped in commands built for Live attach and ssh remote calls ab692127 @umputun
+- a stray `62;22c` could appear at a new pane's prompt, from a terminal query answered twice during attach #968 @umputun
+- a new agterm instance could be refused the control socket, or the state directory, while a process the previous one had just spawned held a copy of the lock #970 #951 @umputun
+- a split session attached from another Mac opened with its right pane focused; it now opens on the left #938 @umputun
+- in the flat and plain flagged lists the row icon sat half outside the selection highlight #954 @umputun
+- `claude-session-resume` recipe: a tab on a second Claude account resumes its own conversation after a restart, and current `claude` subcommands pass through untouched #948 @vnazarenko
+- `codex-session-resume` recipe: a tab is mapped to its conversation from a SessionStart hook, so another codex run on the machine can no longer take its place #914 @pySilver #913
+
+## v0.41.1 - 2026-11-07
+
+### Improved
+
+- **Diff pages color code by language and step between changes.** A `.diff` or `.patch` page colors each file's code in its own language over green and red row bands, where it used to color whole lines green and red. Previous and next buttons in the bar, or `]` and `[`, step from change to change with a "change 3 of 7" counter. `agtermctl session overlay changes --next|--prev` is the control form, and `htmlOverlays[].text.changes` reads back `{count, current}` #916 #921 @umputun
+- ⌘-click on a local `.html` or `.htm` path opens the page over its session, as markdown and text files do, instead of revealing it in Finder. The page runs no script and makes no network connection; a missing or binary file, or one over 4 MiB, is revealed as before. `tree` reports it as `htmlOverlays[].document` #917 @umputun
+- an animated window title, such as an agent's spinner, costs less: the hidden OS window title updates at most twice a second, and the visible title no longer re-lays out the titlebar on every frame #817 @dimonb
+- a program writing the same title over and over queues one title update per pane at a time, not one per write #911 @umputun
+- every cookbook recipe names its author, and a fix to another author's recipe comes as a pull request to it #920 @umputun
+
+### Bug Fixes
+
+- in Live mode, a clean quit with many busy panes could save them with no running command, so the next reboot restored bare shells #918 @umputun #915
+- right after launch File ▸ Attach Remote… could stay disabled, so ⌘⇧R typed `R` into the terminal #912 @umputun
+- the sidebar Tint submenu started every untinted row on the icon, so a Show On pick never carried to the next row. A new tint now starts on the last Show On pick of the app run #910 @umputun
+
+## v0.41.0 - 2026-11-06
+
+### New Features
+
+- **Text files and `path:line` locations open as a page.** ⌘-click on a source, config, text or log file in terminal output shows it read-only in the terminal's theme, with line numbers and syntax highlighting. A location such as `./main.go:42:7` from compiler or grep output opens the file scrolled to that line and marks it, and a relative path resolves against the pane's directory. Reveal in Finder moves to ⌘⌥-click, which reveals any clicked local path. `agtermctl session overlay open --text FILE [--line N]` opens the same page #874 @umputun
+- **Log pages follow the file.** A click on a `.log` or `.out` path opens the text page on up to the last 5,000 lines within a 2 MB read and follows the file's end as it grows, through rotation and truncation. A `path:line` click, and a log on a session another Mac presents, open the static page. Scrolling up pauses following; `F` toggles it, `G` or End jumps to the bottom and `g` or Home to the top. `session overlay open --text FILE --tail N --follow-file` and `session overlay follow on|off|toggle` are the control forms #899 @umputun
+- **Search in text pages.** Every text and log page has a find box like the terminal's. `/` or ⌘F focuses it, `n`/`N` or Return/Shift-Return step through the matches, Esc clears. ⌘F now goes to what is on top, a visible page, an overlay or the quick terminal, never to the terminal behind it. `session overlay search TEXT | --next | --prev | --close` drives it #899 @umputun
+- **Compact sidebar.** Settings ▸ Appearance ▸ Sidebar density picks Default or Compact, and Compact trims row padding and indent so more rows fit. `agtermctl sidebar density default|compact|toggle` sets it and `tree` reports `sidebarDensity` #884 @umputun
+- **More tint colors.** Teal, pink, brown, indigo and mint join the sidebar tint palette, and `session tint`, `workspace tint` and `--tint` also take any `#rrggbb` hex. A row tinted with a hex shows a checked "Custom #rrggbb" entry in its menu #890 @umputun
+- **Five more status shapes.** Triangle-down, play, seal, bolt and bell join the agent-status shapes, in Settings and through `session status --shape`. A Mac on 0.40.0 or older that attached the session draws its own Settings shape for them #898 @umputun
+- Settings ▸ Interface ▸ Sidebar ▸ **Workspace chevrons** is on by default. Turning it off removes the collapse chevron from workspace rows to give names more width, and the workspace row menu gains Collapse Workspace and Expand Workspace #909 @umputun
+- image, markdown and text pages opened on a session another Mac presents now show on that Mac, as HTML pages already did. Before, `session overlay open --image`, `--markdown` and `--text` on such a session were refused. A text page shown there stays static, without log follow or control-driven search #891 @umputun
+- Live panes start the zsh or fish named in ghostty.conf `command`, so `command = /opt/homebrew/bin/fish --login` gives fish in Live mode as it already did with fresh shells. Before, Live always started the macOS login shell. A pane whose daemon is already running keeps its shell until Agterm ▸ Reset Live Sessions… #895 @umputun
+- `tree` reports `snapshotUnsaved: true` on a window whose state saves keep failing, until the next save succeeds #900 @umputun
+- `two-agent-mailbox-chat` cookbook recipe: two agents in a split, Claude Code or Codex in any pairing, talk through pane mailboxes instead of typing into each other's composer. It is the recommended replacement for `two-agent-chat` #876 #888 #896 @umputun #885
+- `claude-git-info` cookbook recipe: each Claude Code session's info line shows the branch, changed-file count and commits ahead and behind for the repo it works in #872 @umputun
+- `image-path-gallery` cookbook recipe: one chord shows the image paths on a pane's screen as a thumbnail gallery, copying them from the host first in an attached session #893 @wildsurfer
+- `subagent-status` cookbook recipe: a Claude Code session's info line counts its running and finished subagents, the row stays active until the last one finishes, and a custom command pages any subagent's transcript over the session #906 #908 @bubakanov
+
+### Improved
+
+- libghostty moves to ghostty v1.4.0, which brings upstream's fixed-memory trims and pauses the display link while idle #883 @umputun
+
+### Bug Fixes
+
+- with Open links in set to an overlay, a ⌘-click over a page that an earlier click opened and then hid went to the browser, and the hidden page stayed out of sight. The click now replaces the hidden page and shows the new one #880 @umputun
+- a clicked path that ends a sentence, such as `/tmp/review.md.`, revealed in Finder instead of opening, because the trailing punctuation stayed on the path #881 @umputun
+- a markdown file with YAML frontmatter, such as any `SKILL.md`, showed a rule and one giant heading. The frontmatter now shows as a YAML code block above the body #897 @umputun
+- Settings ▸ Key Mapping ▸ Lock in terminals let the earlier keyboard layout come back while an HTML overlay page had the keyboard. The lock now holds there too #904 @umputun
+- the palette's Move Session rows moved the session that was selected when the palette opened, so a selection change under the open palette moved the wrong session #879 @umputun
+- on macOS 27 the sidebar Tint submenu drew no color swatches #890 @umputun
+
 ## v0.40.0 - 2026-11-02
 
 ### New Features

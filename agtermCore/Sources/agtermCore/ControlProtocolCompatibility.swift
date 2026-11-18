@@ -10,7 +10,7 @@ extension ControlSessionNode {
                 foreground: [String]? = nil, splitForeground: [String]? = nil,
                 restoreCommand: String? = nil, splitRestoreCommand: String? = nil, status: String? = nil,
                 statusPane: String? = nil, statusBlink: Bool? = nil, statusColor: String? = nil,
-                statusShape: String? = nil, statusChangedAt: Double? = nil,
+                statusShape: String? = nil, statusGlyph: String? = nil, statusChangedAt: Double? = nil,
                 background: BackgroundWatermark? = nil, unseen: Int? = nil,
                 fontSize: Double? = nil, splitFontSize: Double? = nil, scratchFontSize: Double? = nil,
                 surfaces: [ControlSurfaceNode]? = nil, realized: Bool? = nil) {
@@ -22,7 +22,7 @@ extension ControlSessionNode {
                   foreground: foreground, splitForeground: splitForeground,
                   restoreCommand: restoreCommand, splitRestoreCommand: splitRestoreCommand, status: status,
                   statusPane: statusPane, statusBlink: statusBlink, statusColor: statusColor,
-                  statusShape: statusShape, statusChangedAt: statusChangedAt,
+                  statusShape: statusShape, statusGlyph: statusGlyph, statusChangedAt: statusChangedAt,
                   background: background, unseen: unseen, fontSize: fontSize,
                   splitFontSize: splitFontSize, scratchFontSize: scratchFontSize,
                   surfaces: surfaces, realized: realized)

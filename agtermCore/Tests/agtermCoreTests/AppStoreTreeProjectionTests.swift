@@ -92,6 +92,30 @@ struct AppStoreTreeProjectionTests {
         #expect(store.controlTree().workspaces.first?.sessions.first?.backedByZmx == false)
     }
 
+    @Test func surfacelessDaemonBackedPanesProjectAsBacked() throws {
+        let store = makeStore()
+        let workspace = store.addWorkspace(name: "server")
+        let session = try #require(store.addSession(toWorkspace: workspace.id, cwd: "/tmp"))
+        session.hasSplit = true
+        session.splitPaneIdentity = UUID()
+        session.daemonBackedPanes = [session.paneIdentity, session.splitPaneIdentity!]
+
+        let node = try #require(store.controlTree().workspaces.first?.sessions.first)
+        #expect(node.backedByZmx == true)
+        #expect(node.surfaces?.map(\.paneID) == [session.paneIdentity.uuidString, session.splitPaneIdentity!.uuidString])
+    }
+
+    @Test func aSurfacelessSessionWithoutDaemonsStaysUnbacked() throws {
+        let store = makeStore()
+        let workspace = store.addWorkspace(name: "work")
+        let session = try #require(store.addSession(toWorkspace: workspace.id, cwd: "/tmp"))
+        session.hasSplit = true
+        session.splitPaneIdentity = UUID()
+        session.daemonBackedPanes = [session.paneIdentity]
+
+        #expect(store.controlTree().workspaces.first?.sessions.first?.backedByZmx == false)
+    }
+
     @Test func paneBackgroundsProjectOverridesOnlyNeverTheInheritedDefault() throws {
         let store = makeStore()
         let workspace = store.addWorkspace(name: "work")
@@ -108,6 +132,40 @@ struct AppStoreTreeProjectionTests {
         let overridden = try #require(store.controlTree().workspaces.first?.sessions.first)
         #expect(overridden.background == tint)
         #expect(overridden.paneBackgrounds == PaneBackgrounds(right: peer))
+    }
+
+    @Test func liveHostStaleIsReportedPerPaneAndOmittedWhenFalse() throws {
+        let store = makeStore()
+        let workspace = store.addWorkspace(name: "live")
+        let session = try #require(store.addSession(toWorkspace: workspace.id, cwd: "/tmp"))
+        session.surface = SpySurface(backedByZmx: true)
+        session.hasSplit = true
+        session.isSplit = true
+        let split = UUID()
+        session.splitPaneIdentity = split
+        session.splitSurface = SpySurface(backedByZmx: true)
+        let tree = store.controlTree(paneForeground: { _ in nil }, liveAttribution: { _ in .supervisor },
+                                     liveHostStale: { $0 == split })
+        let node = try #require(tree.workspaces.first?.sessions.first)
+        #expect(node.liveHostStale == nil)
+        #expect(node.splitLiveHostStale == true)
+        let json = String(decoding: try JSONEncoder().encode(tree), as: UTF8.self)
+        #expect(json.contains(#""splitLiveHostStale":true"#))
+        #expect(!json.contains(#""liveHostStale""#))
+    }
+
+    @Test func liveHostStaleIsOmittedForOrdinaryAndRemotePanes() throws {
+        let store = makeStore()
+        let workspace = store.addWorkspace(name: "ordinary")
+        let session = try #require(store.addSession(toWorkspace: workspace.id, cwd: "/tmp"))
+        session.surface = SpySurface()
+        let remote = try #require(store.addSession(toWorkspace: workspace.id, cwd: "/tmp", remoteHost: "example"))
+        remote.surface = SpySurface(backedByZmx: true)
+        let tree = store.controlTree(paneForeground: { _ in nil }, liveAttribution: { _ in .supervisor },
+                                     liveHostStale: { _ in true })
+        let json = String(decoding: try JSONEncoder().encode(tree), as: UTF8.self)
+        #expect(!json.contains("LiveHostStale"))
+        #expect(!json.contains("liveHostStale"))
     }
 
     @Test func attributionIsOmittedForOrdinaryAndRemotePanes() throws {
@@ -790,6 +848,22 @@ struct AppStoreTreeProjectionTests {
         #expect(!String(decoding: try JSONEncoder().encode(file), as: UTF8.self).contains("markdown"))
     }
 
+    @Test func aDocumentPageProjectsOnlyItsDocumentSource() throws {
+        let store = makeStore()
+        let workspace = store.addWorkspace(name: "work")
+        let session = try #require(store.addSession(toWorkspace: workspace.id, cwd: "/tmp"))
+        let page = HtmlOverlay(source: .document(path: "/tmp/agdoc/pr.html"))
+        #expect(store.openHtmlOverlay(session.id, pane: nil, overlay: page, sizePercent: 95) == nil)
+
+        let node = try #require(store.controlTree().workspaces[0].sessions[0].htmlOverlays?.first)
+
+        #expect(node == ControlHtmlOverlayNode(pane: nil, document: "/tmp/agdoc/pr.html", state: "loading", error: nil,
+                                               id: page.id.uuidString))
+        let data = try JSONEncoder().encode(node)
+        #expect(try JSONDecoder().decode(ControlHtmlOverlayNode.self, from: data) == node)
+        #expect(String(decoding: data, as: UTF8.self).contains(#""document":"\/tmp\/agdoc\/pr.html""#))
+    }
+
     @Test func aTextPageProjectsItsFileMappedLanguageAndRequestedLine() throws {
         let store = makeStore()
         let workspace = store.addWorkspace(name: "work")
@@ -915,5 +989,33 @@ struct AppStoreTreeProjectionTests {
         #expect(node.zoom == 1.25)
         let json = String(decoding: try JSONEncoder().encode(node), as: UTF8.self)
         #expect(json.contains(#""zoom":1.25"#))
+    }
+
+    @Test(arguments: [false, true])
+    func scratchCwdReportsTheScratchsOwnOrPrimaryDirectoryEvenWhenHidden(shown: Bool) throws {
+        let store = makeStore()
+        let workspace = store.addWorkspace(name: "work")
+        let session = try #require(store.addSession(toWorkspace: workspace.id, cwd: "/primary"))
+        session.scratchSurface = SpySurface()
+        session.scratchActive = shown
+        for (reported, expected): (String?, String) in [(nil, "/primary"), ("/primary/docs", "/primary/docs")] {
+            session.scratchCwd = reported
+            let node = store.controlTree().workspaces[0].sessions[0]
+            let data = try JSONEncoder().encode(node)
+            let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            #expect(json["scratchCwd"] as? String == expected)
+            #expect(node.cwd == "/primary")
+            #expect(try JSONDecoder().decode(ControlSessionNode.self, from: data) == node)
+        }
+    }
+
+    @Test func noScratchOmitsTheScratchDirectoryEvenWithAStaleValue() throws {
+        let store = makeStore()
+        let workspace = store.addWorkspace(name: "work")
+        let session = try #require(store.addSession(toWorkspace: workspace.id, cwd: "/primary"))
+        session.scratchCwd = "/stale"
+        let node = store.controlTree().workspaces[0].sessions[0]
+        let json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(node)) as? [String: Any])
+        #expect(json["scratchCwd"] == nil)
     }
 }

@@ -22,7 +22,7 @@ extension AppActions {
     var paletteContext: PaletteContext {
         let activeStore = store
         return PaletteContext(
-            canRemoveWorkspace: activeStore?.canRemoveWorkspace == true,
+            canRemoveWorkspace: activeStore?.canCloseWorkspace == true,
             hasFlaggedSessions: activeStore?.flaggedSessions.isEmpty == false,
             sidebarShowsWorkspaceTree: activeStore?.sidebarMode == .tree,
             sidebarShowsWorkspaceRows: activeStore?.rendersWorkspaceRows(flaggedLayout: GhosttyApp.shared.flaggedViewLayout) == true,
@@ -46,7 +46,12 @@ extension AppActions {
             dashboardOpen: frontmostDashboard?.isOpen == true,
             pickerActive: pickActive(for: library.activeWindowID),
             activeSessionHasOverlay: activeStore?.activeSession?.hideableOverlaySlots(nil).isEmpty == false,
-            activeSessionIsPage: activeStore?.activeSession?.content == .page
+            activeSessionIsPage: activeStore?.activeSession?.content == .page,
+            activeSessionIsCompanion: activeStore?.activeSession?.parentID != nil,
+            activeSessionIsRemote: activeStore?.activeSession?.remoteHost != nil,
+            remoteWindow: activeStore?.catalogState != nil,
+            remoteConnected: activeStore?.catalogState == .connected,
+            remoteHasDetached: activeStore?.remoteActions?.mirror.detachedItems.isEmpty == false
         )
     }
 
@@ -79,6 +84,7 @@ extension AppActions {
         case .duplicateSession: duplicateActiveSession()
         case .newCompanion: newCompanionOfActiveSession()
         case .duplicateCompanion: duplicateActiveSessionAsCompanion()
+        case .convertCompanion: convertActiveSessionToCompanion()
         case .renameWorkspace: renameActiveWorkspace()
         case .closeSession: closeActiveSession()
         case .reopenRecent: openLatestRecentClosed()
@@ -114,6 +120,8 @@ extension AppActions {
         case .resetFontSize: resetFontSize()
         case .selectTheme: openThemePalette()
         case .attachRemote: attachRemote()
+        case .openRemoteWindow: openRemoteWindow()
+        case .detachedSessions: openDetachedSessions()
         case .editKeymap: editKeymap()
         case .reloadKeymap: reloadKeymap()
         case .editHooks: editHooks()

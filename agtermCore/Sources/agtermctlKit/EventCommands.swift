@@ -95,6 +95,7 @@ enum EventFormatter {
             if event.payload.blink == true { parts.append("blink") }
             if let color = event.payload.color { parts.append("color=\(color)") }
             if let shape = event.payload.shape { parts.append("shape=\(shape)") }
+            if let glyph = event.payload.glyph { parts.append("glyph=\(glyph)") }
             return parts.joined(separator: " ")
         case .notify:
             return "\(time) \(event.kind.rawValue) \(name) \(event.payload.title ?? name): \(event.payload.body ?? "")"
@@ -110,6 +111,7 @@ enum EventFormatter {
             return "\(time) \(event.kind.rawValue) \(name) \(event.payload.pane ?? "") pane-id=\(event.payload.paneID ?? "-")"
         case .remoteOpened, .remoteClosed:
             return "\(time) \(event.kind.rawValue) \(name) host=\(event.payload.host ?? "")"
+                + " remote-session-id=\(event.payload.remoteSessionID ?? "-")"
         case .appLaunched:
             return "\(time) \(event.kind.rawValue)"
         case .message:

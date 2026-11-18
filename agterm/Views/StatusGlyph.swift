@@ -14,9 +14,21 @@ struct StatusGlyph: View {
     /// Optional per-call silhouette override (the session's `AgentIndicator.shape`); nil = this status's
     /// Settings shape, else the default plain circle.
     var shape: StatusShape?
+    /// Optional per-call emoji/text glyph (the session's `AgentIndicator.glyph`); set draws the text
+    /// instead of the symbol, in its own colors — a color emoji ignores `colorHex`.
+    var glyph: String?
+
+    private var swiftUIWeight: Font.Weight {
+        GhosttyApp.shared.statusSymbolWeight(for: status, override: shape) == .heavy ? .heavy : .regular
+    }
 
     var body: some View {
-        Image(systemName: GhosttyApp.shared.statusSymbolName(for: status, override: shape))
-            .foregroundStyle(Color(nsColor: GhosttyApp.shared.statusColor(for: status, override: colorHex)))
+        if let glyph {
+            Text(glyph)
+        } else {
+            Image(systemName: GhosttyApp.shared.statusSymbolName(for: status, override: shape))
+                .fontWeight(swiftUIWeight)
+                .foregroundStyle(Color(nsColor: GhosttyApp.shared.statusColor(for: status, override: colorHex)))
+        }
     }
 }

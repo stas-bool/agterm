@@ -687,6 +687,15 @@ struct AppSettingsTests {
         #expect(original.ghosttyConfigLines() == ["mouse-scroll-multiplier = 3", "right-click-action = paste"])
     }
 
+    @Test(arguments: [(nil, "/srv/app", nil), ("home", "/srv/app", nil), ("custom", "/srv/app", "/Users/me/work"),
+                      ("currentSession", "/srv/app", "/srv/app"), ("currentSession", "", nil), ("currentSession", nil, nil)]
+          as [(String?, String?, String?)])
+    func aRemoteNewSessionSendsTheCurrentRowsOrTheCustomDirectory(_ mode: String?, _ current: String?, _ expected: String?) {
+        let settings = AppSettings(newSessionDirectory: mode, newSessionCustomDirectory: "/Users/me/work")
+
+        #expect(settings.remoteNewSessionCwd(currentSessionCwd: current) == expected)
+    }
+
     @Test func resolveNewSessionCwdHomeIsDefault() {
         #expect(AppSettings().resolveNewSessionCwd(currentSessionCwd: "/proj", home: "/home") == "/home")
         #expect(AppSettings(newSessionDirectory: "home").resolveNewSessionCwd(currentSessionCwd: "/proj", home: "/home") == "/home")
@@ -861,9 +870,10 @@ struct AppSettingsTests {
     }
 
     @Test(arguments: [(InterfaceElement.sessionIcons, "Session icons", InterfaceElement.workspaceIcons),
-                      (.workspaceIcons, "Workspace icons", .sessionIcons)])
-    func rowIconElementsAreShownByDefaultAndHideIndependently(element: InterfaceElement, name: String,
-                                                              other: InterfaceElement) {
+                      (.workspaceIcons, "Workspace icons", .sessionIcons),
+                      (.workspaceChevrons, "Workspace chevrons", .workspaceIcons)])
+    func rowElementsAreShownByDefaultAndHideIndependently(element: InterfaceElement, name: String,
+                                                          other: InterfaceElement) {
         #expect(element.section == .sidebar)
         #expect(element.displayName == name)
         #expect(!element.hiddenByDefault)
@@ -922,6 +932,18 @@ struct AppSettingsTests {
         #expect(original.ghosttyConfigLines() == ["mouse-scroll-multiplier = 3", "right-click-action = paste"])
     }
 
+    @Test func badgeResetDefaultsToFirstKeyAndResolvesKnownRawValues() throws {
+        #expect(AppSettings().badgeReset == nil)
+        #expect(AppSettings().effectiveBadgeReset == .firstKey)
+        #expect(AppSettings(badgeReset: "enter").effectiveBadgeReset == .enter)
+        #expect(AppSettings(badgeReset: "never").effectiveBadgeReset == .never)
+        #expect(AppSettings(badgeReset: "teleporter").effectiveBadgeReset == .firstKey)
+        #expect(AppSettings(statusReset: "never").effectiveBadgeReset == .firstKey)
+        let original = AppSettings(badgeReset: "enter")
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(original))
+        #expect(decoded == original)
+    }
+
     @Test func unknownInterfaceElementDecodesTolerantly() throws {
         // forward-compat rule: an unknown name is dropped from the resolved set and must not fail the
         // whole decode.
@@ -938,7 +960,8 @@ struct AppSettingsTests {
         let titleBar = InterfaceElement.allCases.filter { $0.section == .titleBar }
         let sidebar = InterfaceElement.allCases.filter { $0.section == .sidebar }
         #expect(titleBar.count + sidebar.count == InterfaceElement.allCases.count)
-        #expect(sidebar == [.newWorkspace, .newSession, .flaggedView, .focusFilter, .workspaceAddSession, .workspaceIcons, .sessionIcons])
+        #expect(sidebar == [.newWorkspace, .newSession, .flaggedView, .focusFilter, .workspaceAddSession, .workspaceIcons, .sessionIcons,
+                            .workspaceChevrons])
         #expect(!titleBar.isEmpty)
     }
 

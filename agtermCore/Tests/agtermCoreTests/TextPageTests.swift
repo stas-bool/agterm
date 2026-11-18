@@ -46,6 +46,73 @@ struct TextPageTests {
         #expect(!TextPage.html(text: overCap, language: "go", line: nil, style: "").contains("data-language"))
     }
 
+    @Test func aDiffIsMarkedPastTheHighlightCapWithTheChangeItReopensOn() {
+        let overCap = String(repeating: "a", count: TextPage.maxHighlightBytes + 1)
+
+        let html = TextPage.html(text: overCap, language: "diff", line: nil, style: "", change: 4)
+
+        #expect(html.contains(#"hidden data-diff data-change="4">"#))
+        #expect(!html.contains("data-language"))
+        #expect(!TextPage.html(text: "x", language: "diff", line: nil, style: "", change: 0).contains("data-change"))
+    }
+
+    @Test func aWrappedPageIsMarkedAndAnUnwrappedOneIsNot() {
+        let log = TextLogState(following: true)
+
+        #expect(TextPage.html(text: "x", language: nil, line: nil, style: "", wrap: true).contains(#"hidden data-wrap>"#))
+        #expect(TextPage.html(text: "x", language: nil, line: nil, style: "", log: log, wrap: true).contains("data-wrap"))
+        #expect(!TextPage.html(text: "x", language: nil, line: nil, style: "").contains("data-wrap"))
+    }
+
+    @Test func aDiffMapsEachHeaderPathToItsLanguage() {
+        let text = """
+            diff --git a/main.go b/main.go
+            --- a/main.go
+            +++ b/main.go
+            --- /dev/null
+            +++ "b/odd name.py"
+            --- old.sql\t2026-11-06 10:00:00
+            +++ notes.unknown
+            """
+
+        #expect(TextPage.diffLanguages(in: text) == [
+            "a/main.go": "go", "b/main.go": "go", "\"b/odd name.py\"": "python", "old.sql": "sql",
+        ])
+    }
+
+    @Test func aCRLFDiffMapsItsHeaderPaths() {
+        #expect(TextPage.diffLanguages(in: "diff --git a/x.go b/x.go\r\n--- a/x.go\r\n+++ b/x.go\r\n") == ["a/x.go": "go", "b/x.go": "go"])
+    }
+
+    @Test func aColoredDiffMapsItsHeaderPathsWithoutTheEscapes() {
+        let text = "\u{1B}[1mdiff --git a/x.go b/x.go\u{1B}[m\n\u{1B}[1m--- a/x.go\u{1B}[m\n\u{1B}[1m+++ b/x.go\u{1B}[m\n"
+        #expect(TextPage.diffLanguages(in: text) == ["a/x.go": "go", "b/x.go": "go"])
+    }
+
+    @Test func aDiffUnderTheHighlightCapCarriesItsFileLanguages() {
+        let text = "--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-a\n+b\n"
+        let overCap = text + String(repeating: " x\n", count: TextPage.maxHighlightBytes / 3 + 1)
+
+        #expect(TextPage.html(text: text, language: "diff", line: nil, style: "")
+            .contains(#"data-files="{&quot;a\/x.go&quot;:&quot;go&quot;,&quot;b\/x.go&quot;:&quot;go&quot;}""#))
+        #expect(!TextPage.html(text: overCap, language: "diff", line: nil, style: "").contains("data-files"))
+        #expect(!TextPage.html(text: text, language: "go", line: nil, style: "").contains("data-files"))
+        #expect(!TextPage.html(text: "-a\n+b\n", language: "diff", line: nil, style: "").contains("data-files"))
+    }
+
+    @Test func onlyAPlainDiffPageIsMarked() {
+        let log = TextPage.html(text: "x", language: "diff", line: nil, style: "", log: TextLogState(following: true), change: 2)
+
+        #expect(!log.contains("data-diff"))
+        #expect(!log.contains("data-change"))
+        #expect(!TextPage.html(text: "x", language: "go", line: nil, style: "", change: 2).contains("data-diff"))
+    }
+
+    @Test(arguments: [("a.diff", true), ("/x/b.PATCH", true), ("a.txt", false), ("a.go", false), ("diff", false)])
+    func isDiffFollowsTheExtension(_ path: String, _ expected: Bool) {
+        #expect(TextPage.isDiff(file: path) == expected)
+    }
+
     @Test(arguments: [
         ("a.swift", "swift"), ("a.go", "go"), ("a.py", "python"), ("a.rb", "ruby"), ("a.rs", "rust"),
         ("a.js", "javascript"), ("a.mjs", "javascript"), ("a.cjs", "javascript"), ("a.ts", "typescript"),

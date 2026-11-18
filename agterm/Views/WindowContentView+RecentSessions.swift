@@ -80,6 +80,7 @@ extension WindowContentView {
                 status: session.agentIndicator.status,
                 statusColorHex: session.agentIndicator.color,
                 statusShape: session.agentIndicator.shape,
+                statusGlyph: session.agentIndicator.glyph,
                 foreground: chromeText,
                 hoverColor: popoverHoverColor,
                 accessibilityID: "recent-session-row"
@@ -163,6 +164,7 @@ extension WindowContentView {
                         status: entry.session.agentIndicator.status,
                         statusColorHex: entry.session.agentIndicator.color,
                         statusShape: entry.session.agentIndicator.shape,
+                        statusGlyph: entry.session.agentIndicator.glyph,
                         foreground: chromeText,
                         hoverColor: popoverHoverColor,
                         accessibilityID: "attention-session-row",
@@ -216,6 +218,7 @@ private struct SessionPopoverRow: View {
     let status: AgentStatus?
     let statusColorHex: String?
     let statusShape: StatusShape?
+    let statusGlyph: String?
     let foreground: Color
     let hoverColor: Color
     let accessibilityID: String
@@ -226,7 +229,8 @@ private struct SessionPopoverRow: View {
     var body: some View {
         Button(action: onSelect) {
             SessionSwitcherRow(title: title, subtitle: subtitle, foreground: foreground,
-                               status: status, statusColorHex: statusColorHex, statusShape: statusShape, remote: remote)
+                               status: status, statusColorHex: statusColorHex, statusShape: statusShape,
+                               statusGlyph: statusGlyph, remote: remote)
                 .background(hovering && isEnabled ? hoverColor : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .contentShape(Rectangle())

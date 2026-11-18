@@ -479,7 +479,7 @@ private struct PaletteRow: View {
                     .foregroundStyle(.secondary)
             }
             if indicator.status != .idle {
-                StatusGlyph(status: indicator.status, colorHex: indicator.color, shape: indicator.shape)
+                StatusGlyph(status: indicator.status, colorHex: indicator.color, shape: indicator.shape, glyph: indicator.glyph)
             }
         }
         .padding(.horizontal, metrics.scaled(12))

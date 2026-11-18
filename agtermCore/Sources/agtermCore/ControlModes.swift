@@ -12,7 +12,7 @@ public struct ControlEventReadOptions: Equatable, Sendable {
 }
 
 /// Parsed binary control mode with the shared default/toggle semantics used by mode-bearing commands.
-public enum ControlToggleMode: Equatable, Sendable {
+public enum ControlToggleMode: String, Codable, Equatable, Sendable {
     case on
     case off
     case toggle
@@ -204,6 +204,9 @@ public struct ControlSessionStatusUpdate: Equatable, Sendable {
     /// Per-call glyph silhouette; nil falls back to the Settings shape / the built-in plain circle. The
     /// dispatcher rejects an unknown raw value before any mutation.
     public let shape: StatusShape?
+    /// Per-call emoji/text glyph drawn INSTEAD of the silhouette; nil draws the shape path. Dispatcher-
+    /// validated to 1...4 grapheme clusters with no control characters.
+    public let glyph: String?
     /// Which pane set the status (`left`=main, `right`=split, `scratch`), nil when unspecified. Stamped onto
     /// the indicator so pane-scoped keystroke-clear and pane-aware navigation know which surface blocked.
     public let pane: StatusPane?
@@ -212,18 +215,22 @@ public struct ControlSessionStatusUpdate: Equatable, Sendable {
     /// app-side. A resolved token OVERRIDES the stale role `pane` (a promoted-then-re-split pane, #199);
     /// nil/empty/unknown falls back to `pane`.
     public let paneID: String?
+    /// `ifIdle` applies the write only while the session's status is idle; otherwise it is an ok no-op.
+    public let ifIdle: Bool
 
     public init(status: AgentStatus, blink: Bool?, autoReset: Bool?, sound: String?,
-                color: String? = nil, shape: StatusShape? = nil,
-                pane: StatusPane? = nil, paneID: String? = nil) {
+                color: String? = nil, shape: StatusShape? = nil, glyph: String? = nil,
+                pane: StatusPane? = nil, paneID: String? = nil, ifIdle: Bool = false) {
         self.status = status
         self.blink = blink
         self.autoReset = autoReset
         self.sound = sound
         self.color = color
         self.shape = shape
+        self.glyph = glyph
         self.pane = pane
         self.paneID = paneID
+        self.ifIdle = ifIdle
     }
 }
 

@@ -252,7 +252,7 @@ final class StatusIconView: NSImageView {
             return
         }
         isHidden = false
-        image = Self.icon(for: indicator.status, override: indicator.color, shape: indicator.shape)
+        image = Self.icon(for: indicator.status, override: indicator.color, shape: indicator.shape, glyph: indicator.glyph)
         widthConstraint.constant = Self.glyphWidth
         setAccessibilityValue(indicator.status.rawValue)
         let shouldBlink = indicator.blink && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -274,15 +274,33 @@ final class StatusIconView: NSImageView {
         layer?.removeAnimation(forKey: Self.blinkKey)
     }
 
-    private static func icon(for status: AgentStatus, override colorHex: String?, shape: StatusShape?) -> NSImage? {
+    private static func icon(for status: AgentStatus, override colorHex: String?, shape: StatusShape?,
+                             glyph: String? = nil) -> NSImage? {
         guard status != .idle else { return nil } // unreachable: `apply` returns early on `.idle` before drawing
+        // a per-call emoji glyph draws as text in its own colors — the tint cannot reach it, by design.
+        if let glyph { return glyphImage(glyph) }
         // symbol + color come from the shared resolvers, so this glyph and the SwiftUI StatusGlyph stay
         // identical, per-call `--shape`/`--color` overrides included.
-        let config = NSImage.SymbolConfiguration(pointSize: Self.glyphPointSize, weight: .regular)
+        let weight = GhosttyApp.shared.statusSymbolWeight(for: status, override: shape)
+        let config = NSImage.SymbolConfiguration(pointSize: Self.glyphPointSize, weight: weight)
             .applying(NSImage.SymbolConfiguration(paletteColors: [GhosttyApp.shared.statusColor(for: status, override: colorHex)]))
         let symbol = GhosttyApp.shared.statusSymbolName(for: status, override: shape)
         return NSImage(systemSymbolName: symbol, accessibilityDescription: status.rawValue)?
             .withSymbolConfiguration(config)
+    }
+
+    /// Renders a text glyph (an emoji, typically) into an image at the symbol point size, centered in its
+    /// own bounding box; `imageScaling` on the view fits a wider multi-character glyph into the slot.
+    private static func glyphImage(_ glyph: String) -> NSImage? {
+        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: glyphPointSize)]
+        let text = glyph as NSString
+        let size = text.size(withAttributes: attributes)
+        guard size.width > 0, size.height > 0 else { return nil }
+        let image = NSImage(size: size)
+        image.lockFocus()
+        text.draw(at: .zero, withAttributes: attributes)
+        image.unlockFocus()
+        return image
     }
 }
 
@@ -336,8 +354,15 @@ final class SidebarRowView: NSTableRowView {
             (GhosttyApp.shared.terminalForegroundColor ?? .white)
                 .withAlphaComponent(isEmphasized ? Self.keyAlpha : Self.inactiveAlpha).setFill()
         }
+        NSBezierPath(roundedRect: selectionRect, xRadius: 7, yRadius: 7).fill()
+    }
+
+    /// selectionRect is the pill's frame in the row.
+    var selectionRect: NSRect {
+        let minX = (superview as? SidebarOutlineView)?.selectionMinX ?? 8
         let inset = GhosttyApp.shared.sidebarDensity.selectionInset
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 8, dy: inset), xRadius: 7, yRadius: 7).fill()
+        let pill = bounds.insetBy(dx: 0, dy: inset)
+        return NSRect(x: pill.minX + minX, y: pill.minY, width: pill.width - minX - 8, height: pill.height)
     }
 }
 

@@ -68,11 +68,11 @@ The event kinds and payloads are:
   selected split and the primary exiting while selected each emit one; a swap, a hidden split shown again
   and a window coming forward emit nothing, and neither does a reload. The scratch keeps `pane.scratch`
   and a session switch keeps `session.selected`. A session created in or moved into a window starts silent.
-- `remote.opened` / `remote.closed`: session `name` and the ssh destination of a local row created by
-  `zmx attach` as `host`, emitted beside `session.created` / `session.closed` for that session only. They describe the row's
+- `remote.opened` / `remote.closed`: session `name`, the ssh destination of a local row created by
+  `zmx attach` as `host`, and the origin's session id it shows as `remoteSessionID`, emitted beside `session.created` / `session.closed` for that session only. They describe the row's
   presence in the local tree, never the ssh connection: undo re-emits `remote.opened`, and an ssh that
   died leaves the row holding its exit line until it is closed. Closing a remote split pane alone emits
-  neither.
+  neither. The human line reads `HH:MM:SS remote.opened NAME host=HOST remote-session-id=ID`.
 - `app.launched`: an empty payload and no window, workspace or session. Emitted once per app run, after
   `hooks.conf` is loaded and the control socket accepts connections, so a hook on it can call
   `agtermctl` at once. The restored windows and sessions are in the tree by then; their terminals may
@@ -144,7 +144,8 @@ waits forever on an absent app. SIGINT and SIGTERM use normal process behavior.
 
 `agtermctl tree [--json] [--window W]` — the workspace/session tree. Each session node:
 `id`, `name`, `cwd`, `splitCwd` (the split pane's last reported directory, falling back to its restored
-directory, then the primary cwd; omitted without a split or on older servers), `title` (the raw OSC terminal
+directory, then the primary cwd; omitted without a split or on older servers), `scratchCwd` (the scratch
+shell's last reported directory or where it started; omitted without a scratch or on older servers), `title` (the raw OSC terminal
 title, for example a remote host over SSH, omitted
 when none reported; distinct from `name`, the derived sidebar label), `active` (selected),
 `split` (split SHOWN side by side, the read side of `session split on|off`),
@@ -165,8 +166,13 @@ the bundled persistent host, `app` the running agterm, `orphaned` a self-respons
 dead responsible process, and `unknown` an unavailable reading or an unrelated live responsible process;
 omitted for non-Live and remote panes; the split field includes hidden splits and is omitted without a
 split; these describe attribution, not permission grants),
+`liveHostStale` and `splitLiveHostStale` (true for a `supervisor` pane whose host is from an earlier agterm
+build or login, which `zmx reset` moves to the current one; omitted otherwise),
 `remoteHost` (the machine an attached session came from — the read side of `zmx attach`; omitted for a
-local session, and never present after a relaunch because a remote session is never written to disk),
+local session; a remote row is never written to disk, so a per-session attach is gone after a relaunch, while a
+remote window rebuilds its rows from the server's catalog),
+`remoteSessionID` (the origin's id for the session an attached row shows, companions and page rows included,
+the id `zmx attach` takes; on a remote window's row it equals the row's `id`; omitted for a local session),
 `presentation` (on an attached session only: `state` is `connecting`, `connected`, `unsupported` for an
 origin too old to stream, or `failed` with the reason in `error`, and `mode` is `presenter` when this
 row's stream holds the presenter role (see Remote sessions) or `mirror` when it does not; it says whether the stream is up,
@@ -201,7 +207,7 @@ session not laid out yet),
 `paneOverlays` (the panes covered by their own pane-scoped overlay — `["left"]`, `["right"]` or
 `["left","right"]`, omitted when neither is; the read side of `session overlay open --pane`, reported
 independently of the session-wide `overlay` flag, which a pane overlay never sets),
-`htmlOverlays` (the pages in the overlay slots, see `session overlay open --html`, `--url`, `--image`, `--markdown` and `--text`; `overlay` and
+`htmlOverlays` (the pages in the overlay slots, see `session overlay open --html`, `--url`, `--image`, `--markdown` and `--text`, plus `document` for a ⌘-clicked `.html` file; `overlay` and
 `paneOverlays` count them as covers too),
 `hud` (the message panel occupying the session-wide overlay slot — the read side of `session hud`; omitted
 when none is up. A
@@ -234,7 +240,7 @@ as `status`, so it is never reported without a `status`), `statusBlink` (`true` 
 set to blink — the `--blink` value; omitted when idle or not blinking), `statusColor` (the `#rrggbb`
 glyph-tint override — the `--color` value; omitted when idle or using the configured color) and
 `statusShape` (the glyph silhouette override — the `--shape` value, one of
-`circle`|`square`|`triangle`|`triangle-down`|`play`|`diamond`|`capsule`|`seal`|`star`|`bolt`|`bell`;
+`circle`|`square`|`triangle`|`triangle-down`|`play`|`diamond`|`capsule`|`seal`|`star`|`bolt`|`bell`|`checkmark`;
 omitted when idle or using the configured shape.
 Like `statusColor` it reports the PER-CALL override only, so a shape picked in Settings reads back as
 absent), `statusChangedAt` (when the status was last SET, in epoch seconds — the same clock an event's
@@ -251,8 +257,9 @@ Read it with `active`: an active session is selected right now),
 `parent` (a companion's parent session id, the read side of `session new --parent`; omitted for a
 top-level session), `collapsed` (true only for a parent whose companions are folded, the read side of
 `session collapse`/`expand`; omitted otherwise),
-`content` (`"page"` for a page companion, the read side of `session overlay open --companion`; omitted for a
-terminal session. Such a node has no terminal, so `realized` is false and `cwd` reports the parent's directory),
+`content` (`"page"` for a page session, the read side of `session overlay open --companion` or `--page`; omitted
+for a terminal session. Such a node has no terminal, so `realized` is false and `cwd` reports a companion's parent
+directory, or the directory a top-level page was created in),
 `foreground`/`splitForeground` (the live argv of each pane's foreground
 process — what it is running — omitted when the pane sits at its shell prompt, and also for a
 setuid/setgid foreground process like `top` or `sudo`, whose argv macOS refuses to expose),
@@ -470,9 +477,10 @@ buys nothing. A caller with no tree uses `version`.
   errors if no workspace has that name unless `--create-workspace` is also passed, which reuses an
   existing one or creates it when absent (idempotent). `--command` runs that command as the session's
   process instead of the login shell (no echoed command line; the session closes when the command
-  exits). It runs argv-style (tokenized, quotes respected, but NO shell), so shell operators (`;`,
-  `&&`, `$VAR`, redirects, globs) are not interpreted, and it inherits the app's GUI `PATH` (the launchd
-  default — no `/opt/homebrew/bin`), so a bare Homebrew or other non-default binary fails with exit 127.
+  exits). libghostty runs it under bash as `exec <line>`: quotes, `$VAR`, redirects, pipes and globs
+  work; wrap a `;` or `&&` list in `sh -c`. It inherits the
+  app's GUI `PATH` (the launchd default — no `/opt/homebrew/bin`), so a bare Homebrew or other
+  non-default binary fails with exit 127.
   Wrap in a login shell for both — `--command "zsh -lc 'htop'"` — or give an absolute path
   (`/opt/homebrew/bin/htop`). All of that describes Fresh shells and Re-run commands. In Live sessions
   mode the command is instead a create-only zmx payload the pane's Live shell runs, so
@@ -508,7 +516,7 @@ buys nothing. A caller with no tree uses `version`.
   without `--tint` is refused, and an invalid value creates nothing. `--parent SID` creates a companion
   session instead; see the next entry.
 - `session new --parent SID [--cwd DIR] [--command CMD [--wait]] [--name NAME] [--no-select] [--tint COLOR [--tint-on PARTS]] [--window W]`
-  Create a companion session: an ordinary session pinned for life to the parent SID (id / unique prefix /
+  Create a companion session: an ordinary session pinned to the parent SID (id / unique prefix /
   `active`). A companion SID means its parent, so a companion of a companion is never created: the new one
   becomes a sibling under the same parent. It lands in the parent's workspace right after the parent and
   its earlier companions, indented under the parent in the sidebar tree. `--cwd` defaults to the parent's
@@ -536,7 +544,8 @@ buys nothing. A caller with no tree uses `version`.
   twin is New Companion in the session row's context menu and the Session menu, an action-palette row, and
   the keyless `new_companion` keymap action. Read back from the tree session node's `parent` field.
   A page companion shows an HTML page instead of a terminal and never starts a shell; it is created with
-  `session overlay open --html FILE --companion` or `--url URL --companion` (see that entry).
+  `session overlay open --html FILE --companion` or `--url URL --companion` (see that entry). A top-level page
+  session (`--page`) can be a parent too.
 - `session collapse [--target] [--window W]` - fold a parent's companions in the sidebar tree; returns the
   session id. Persisted. A session without companions errors `session has no companions`. Read back from the
   tree session node's `collapsed` flag. Wire command `session.collapse`. `sidebar expand|collapse` and
@@ -551,12 +560,20 @@ buys nothing. A caller with no tree uses `version`.
   (`left pane: vim is on the restore denylist; nothing was created`): a denylisted program, an unreadable
   foreground or working directory, unreplayable arguments or one containing a backslash, a program started by a
   name that its own PATH or directory no longer holds, a pane under a visible
-  program overlay. A page companion is refused. On a session attached from another Mac, that Mac duplicates its
+  program overlay. A page session is refused. On a session attached from another Mac, that Mac duplicates its
   own session under its own policy, and the copy attaches here as for `session new --parent`.
   `--no-select` (with `--companion`) creates it without selecting it. A pipeline or shell job is copied as its foreground process only; name, status,
   flag, overlays, scratch and background are not copied. Wire command `session.companion.duplicate`; returns
   `result.id` and `result.parent`. GUI twin: Duplicate as Companion in the row context menu and the Session
   menu, a palette row, and the keyless `duplicate_companion` action.
+- `session convert --companion [--target] [--window W]` - Convert to Companion: open a fresh login shell in the
+  target's slot and focused directory and move the target under it as a companion, still running, with its own
+  companions after it; the target keeps its id, name, flag, status and panes, and ends selected. `--companion` is
+  required. Refused `already a companion` for a companion and `convert it on the Mac it runs on` for a session
+  attached from another Mac. Wire command `session.companion.convert`; returns `result.id` (the converted
+  session) and `result.parent` (the fresh one), and the human output prints the fresh id. Read back as both
+  nodes' `parent`. GUI twin: Convert to Companion in the row context menu and the Session menu, a palette row,
+  and the keyless `convert_companion` action.
 - `session duplicate [--target] [--window W]` — create a fresh session in the SAME workspace as the
   target, inserted directly AFTER it, rooted at the target's focused-pane working directory (the live
   OSC 7 cwd the sidebar row shows and `session reveal` opens); selects + focuses the new session and
@@ -592,13 +609,15 @@ buys nothing. A caller with no tree uses `version`.
 - `session rename <name> [--target] [--window W]`.
 - `session reveal [--target] [--window W]` — select the target session's focused-pane working
   directory in Finder. Errors when that directory no longer exists.
-- `session go --to next|prev|first|last|next-attention|prev-attention [--window W]` — move the
+- `session go --to next|prev|first|last|next-attention|prev-attention|N [--window W]` — move the
   selection relative to the CURRENT one (no `--target`). Operates over the VISIBLE/FILTERED set: the
   flagged sessions in flagged mode, the marked workspaces' sessions while the focus filter is applied,
   else all sessions (clearing the flag / suspending the filter restores the full set). next/prev wrap around at the ends (last→first,
   first→last); first/last jump to the ends of that set; next-attention/prev-attention step only through the filtered
   sessions needing attention (status blocked/completed, plus active when the tree reports
-  `attentionIncludesActive: true`), wrapping, always within the addressed window. Returns the newly selected id.
+  `attentionIncludesActive: true`), wrapping, always within the addressed window. A number `N` selects the
+  Nth session of that set in sidebar order, 1-based, sessions in a collapsed workspace included; past the end it
+  errors `no session at position N: M navigable` and leaves the selection alone. Returns the newly selected id.
 - `session move <workspace> [--target] [--window W]` — relocate the session to another workspace
   (appends). OR `session move --to up|down|top|bottom [--target]` — reorder within its workspace. OR
   `session move --after SID | --before SID [--target]` — place the session directly after / before an
@@ -738,7 +757,8 @@ error keeps those names for compatibility.
   on screen starts it there without switching and without taking the keyboard, which goes to the
   scratch once that session is selected; `--follow` selects the target, as on `session overlay open`.
   `--command` (only when showing) runs that program as the
-  scratch's process instead of a login shell — argv-style (no shell, and inheriting the app's GUI
+  scratch's process instead of a login shell — run as `session new --command` runs it (wrap a `;` or `&&`
+  list in `sh -c`, and it inherits the app's GUI
   `PATH`, so the same exit-127 caveat as `session new --command`: wrap in `"zsh -lc '…'"` or use an
   absolute path) and RUN-ONCE like `session new --command` (after it exits, the next `on` is a plain
   shell). A scratch is expendable, so passing `--command` while one is already open respawns it. Not
@@ -756,14 +776,16 @@ error keeps those names for compatibility.
   `0.05..0.95` and persisted, and the applied (clamped) fraction is printed (and returned as `result.ratio`
   under `--json`). Errors when the session has no split. Resizing a hidden split updates the stored
   fraction; it takes effect when the split is next shown.
-- `session status <idle|active|completed|blocked> [--blink] [--auto-reset] [--sound NAME] [--color #rrggbb] [--shape circle|square|triangle|triangle-down|play|diamond|capsule|seal|star|bolt|bell] [--pane left|right|scratch] [--pane-id TOKEN] [--target] [--window W]` —
-  set the sidebar agent-status glyph. Every ACCEPTED call stamps the session node's
+- `session status <idle|active|completed|blocked> [--blink] [--auto-reset] [--if-idle] [--sound NAME] [--color #rrggbb] [--shape circle|square|triangle|triangle-down|play|diamond|capsule|seal|star|bolt|bell|checkmark] [--pane left|right|scratch] [--pane-id TOKEN] [--target] [--window W]` —
+  set the sidebar agent-status glyph. Every APPLIED write stamps the session node's
   `statusChangedAt`, including idle and one that re-pushes the same status, so a poller can read the last
   set time without keeping state of its own; a call refused by the pane-precedence rule
   changes nothing, the stamp included. `--blink` requests an attention pulse; macOS Reduce Motion
   suppresses the repeating sidebar and dashboard animation while keeping the status visible, and the
   pulse resumes when Reduce Motion is disabled. `--auto-reset` clears it back to idle once the session
-  is visited (use for a one-shot completion flash). `--sound` plays a
+  is visited (use for a one-shot completion flash). `--if-idle` applies the status only while the
+  session is idle; on any other status it changes nothing, stamp and sound included, and still answers
+  ok, so a background worker's `active` cannot overwrite the main agent's status. `--sound` plays a
   one-shot sound when the status is set: `default` (the system alert sound) or a system sound name
   (`Basso`, `Blow`, `Bottle`, `Frog`, `Funk`, `Glass`, `Hero`, `Morse`, `Ping`, `Pop`, `Purr`,
   `Sosumi`, `Submarine`, `Tink`; also any custom sound in `~/Library/Sounds`) — an unknown name errors.
@@ -776,7 +798,7 @@ error keeps those names for compatibility.
   `session status` without `--color` reverts to the Settings-configured color (a malformed hex errors).
   Use it to distinguish states beyond the fixed palette (e.g. a caller-specific blocked color).
   `--shape` (`circle`, `square`, `triangle`, `triangle-down`, `play`, `diamond`, `capsule`, `seal`, `star`, `bolt`,
-  `bell`) overrides the glyph SILHOUETTE
+  `bell`, `checkmark`) overrides the glyph SILHOUETTE
   the same way — it rides the status, so the next `session status` without `--shape` reverts to the
   Settings-configured shape, else the built-in plain circle (an unknown name errors, listing the accepted names).
   Shape is a second channel alongside the tint, so a session stays distinguishable at a glance and for a
@@ -895,8 +917,8 @@ error keeps those names for compatibility.
   tinted) and the palette's "Tint Session: <Color>" / "Tint Session: None" for the active session.
 - `session seen [--target] [--window W]` — clear the session's unseen-notification badge without changing
   the selection, focus, or agent status. It is the focus-free counterpart to `notify`: `notify` (and a
-  terminal's own OSC 9/777) raise the red badge, and until now the only way to clear it was visiting the
-  session. Idempotent — a no-op when the badge is already zero. Read the current count from the tree node's
+  terminal's own OSC 9/777) raise the red badge, which otherwise clears only when the session is visited or
+  typed in (as Settings ▸ Notifications ▸ Badge reset allows). Idempotent — a no-op when the badge is already zero. Read the current count from the tree node's
   `unseen` field. This lets an orchestrator acknowledge a driven session's notifications over the socket
   while keeping the badge a real attention signal on the sessions a human tends.
 - `session restore (<command> | --none | --clear) [--pane left|right] [--pane-id TOKEN] [--target] [--window W]`
@@ -1136,17 +1158,24 @@ error keeps those names for compatibility.
   picture over 100 megapixels (`image too large`). The file is read synchronously, so one on slow or network
   storage stalls the app until it is read. On a session another Mac presents it opens there (Remote
   sessions). Read back `image` in `htmlOverlays`.
-- `session overlay open --markdown FILE [--size-percent N [--width PT] [--height PT]] [--background-color #rrggbb] [--follow] [--pane left|right] [--target] [--window W]`
+- `session overlay open --markdown FILE [--navigation] [--size-percent N [--width PT] [--height PT]] [--background-color #rrggbb] [--follow] [--pane left|right] [--target] [--window W]`
   - render a `.md` or `.markdown` file as a page in the terminal theme, the view a user's ⌘-click on its path opens
   (at the link-open size, 95% when links open in the browser). Code is highlighted, task lists show boxes, and
   headings get GitHub-style anchors. Pictures in the file's own folder are embedded, symlinks resolved first;
   any other picture, and any past the first 256, shows its alt text and nothing is fetched. Raw HTML stays text and the page runs no script
   of its own; a web link opens in the browser after the confirmation, a `#heading` link scrolls, any other link
-  is plain text. No bridge; Open in Browser and Show in Finder are refused. Refuses a COMMAND, `--html`,
-  `--url`, `--image`, the page flags, `--cwd`, `--wait`, `--block` and `--companion`; a relative FILE resolves
+  is plain text. With `--navigation` (a ⌘-clicked file asks for it) a relative link to a `.md`/`.markdown`
+  file in its folder or below opens that file in the same page, with back and forward through the strip and
+  `session overlay navigate`; a link leaving the folder or resolving to a non-markdown file stays inert, and a
+  file directly in `/` or the home folder opens with links as text and `navigation` omitted, as does a page
+  shown on an older agterm on another Mac. No bridge; Open in
+  Browser and Show in Finder are refused. Refuses a COMMAND, `--html`, `--url`, `--image`, the other page
+  flags, `--cwd`, `--wait`, `--block` and `--companion`; a relative FILE resolves
   against the caller's directory. Refused: a path that is not a regular readable file (`unreadable markdown
   file`) and a file over 4 MB (`markdown file too large`). The wire field is `markdownFile`, apart from the
-  HUD's `markdown` flag. Opens on a presenting Mac like an image page. Read back `markdown` in `htmlOverlays`.
+  HUD's `markdown` flag. Opens on a presenting Mac like an image page, following links there too unless that
+  agterm is older. Read back `markdown` (the file opened), `navigation`, and `page`, `canGoBack` and
+  `canGoForward` for the file shown, in `htmlOverlays`.
 - `session overlay open --text FILE [--line N | --tail N [--follow-file] | --follow-file] [--size-percent N [--width PT] [--height PT]] [--background-color #rrggbb] [--follow] [--pane left|right] [--target] [--window W]`
   - show a source, config, text or log file read-only in the terminal theme, the view a user's ⌘-click on its
   path opens (at the link-open size, 95% when links open in the browser), with line numbers. Highlighted when the
@@ -1167,7 +1196,8 @@ error keeps those names for compatibility.
   not `--follow`, which selects the session. The page has a bar with follow and search and no line numbers; a user scroll up pauses,
   the bottom or Resume follows again. A rotated, truncated or recreated file is picked up by the next check, a missing
   one shows waiting, and binary data keeps the last text marked unreadable. Both refuse `--line` and need `--text`.
-  A log page is refused on a session another Mac presents (`a log page is not shown on another Mac`). Wire fields
+  On a session another Mac presents, a log page opens there when that Mac's agterm shows live text pages, and is
+  refused otherwise (`session.overlay.open: the Mac presenting this session cannot show a log page`). Wire fields
   `tail` and `followFile`; `text` adds `tail`, `following`, `lines`, `clipped` (the first line is the end of one longer
   than 2 MB), `waiting` and `unreadable`, omitted on a plain page. A ⌘-click on a `.log` or `.out` path opens it
   following, and a `path:line` location the plain page.
@@ -1181,11 +1211,27 @@ error keeps those names for compatibility.
   next or previous match, wrapping, pauses a following log page, and returns `result.text` as `N of M`; it is
   refused `no search query: set one first` without a query and `page not loaded` before the page exists, while a
   query set then runs when it loads. An empty slot answers `no overlay`, a program `the overlay is not an html page`,
-  any other page, one shown for another Mac included, `no text page`, and a slot handed to the presenting Mac
-  `remote page: search it on the Mac that shows it`.
+  and any other page `no text page`. A slot handed to the presenting Mac runs it there and answers with that Mac's
+  result, as `follow`, `changes` and `wrap` do (Remote sessions); a presenting agterm too old for live text pages
+  answers `remote page: search it on the Mac that shows it`.
   Wire `text` and `to` (`next`, `prev`, `close`). Read back `htmlOverlays[].text.search`: `{query, matches,
   current}`, current from 1 and 0 with no match, omitted with no query. The page's own field (`/` or ⌘F, `n`/`N`,
   Esc) sets the same query.
+- `session overlay changes --next | --prev [--pane left|right] [--target] [--window W]`
+  - step the `.diff` or `.patch` page in the addressed slot to its next or previous change, a change being one run of
+  removed and added lines inside a hunk; it wraps, and after the user scrolled away it goes on from the view. Returns
+  `result.text` as `N of M`. Refused `no diff page` for any other page, `no changes` for a patch without any,
+  `page not loaded` before the page exists, and, from a presenting agterm too old for live text pages,
+  `remote page: step it on the Mac that shows it`. Wire `to` (`next`, `prev`). Read back
+  `htmlOverlays[].text.changes`: `{count, current}`, current 0 before any step, omitted on any other page and until
+  the page reports. The page's own buttons and the
+  `]`/`[` keys step the same way.
+- `session overlay wrap on|off|toggle [--pane left|right] [--target] [--window W]`
+  - wrap the long lines of the text, log or diff page in the addressed slot, unwrap them, or toggle; returns
+  `result.text` `wrapped` or `unwrapped`. A page opens unwrapped and keeps its choice until it closes. Refused
+  `no text page` for any other page, and, from a presenting agterm too old for live text pages, `remote page: wrap it
+  on the Mac that shows it`. Wire `mode`. Read back `htmlOverlays[].text.wrap`, true while wrapped and omitted
+  otherwise. The page's Wrap button and `w` toggle the same state.
 - `session overlay open --html FILE|--url URL --companion [page flags] [--follow] [--target] [--window W]`
   - open the page as a page companion of the target instead of in its overlay slot: a companion session
   (see `session new --parent`) that shows the page and never starts a shell. Its row sits under the parent,
@@ -1203,20 +1249,38 @@ error keeps those names for compatibility.
   view, and closing it there closes every view. Each view has its own browser state, and the page's own
   reload and navigation act on that view; its other commands run on the other Mac. The row mirrors no
   status, notification or context. A loopback `--url` is refused, since it names a server on the other Mac.
-  `zmx attach HOST ID` shows a page companion again under the one row here attached to its parent.
-  The page and the row end together: when the page closes itself (`window.close()`, a submit) or
-  `session overlay close` runs on it, the row closes at once. The strip's close button and ⌘W close it like
-  any session, with the close confirmation setting and the grace-period undo. A page companion is never
-  saved: it is gone after a relaunch and is not in Recent Closed, so recreate it from an `on app.launched`
-  hook (see hooks). `session overlay hide`/`toggle` answer `no overlay`, `show` succeeds and changes nothing,
+  On a row of a remote window, agterm-server creates the companion (an `--html` path is a path on the host).
+  `zmx attach HOST ID` shows a page companion again under the one row here attached to its parent, and a
+  top-level page session as a top-level row.
+  The page and the row end together: when the page submits or `session overlay close` runs on it, the row
+  closes at once. The page's own `window.close()`, the strip's close button and ⌘W close it like any session,
+  with the close confirmation setting and the grace-period undo. The row is saved and restored like the page
+  session in the next entry. `session overlay hide`/`toggle` answer `no overlay`, `show` succeeds and changes nothing,
   and the strip has no hide button. Terminal commands and anything that would cover, float or replace the
-  page are refused with `<cmd>: not available on a page companion`: `session.type`, `.text`, `.copy`,
+  page are refused with `<cmd>: not available on a page session`: `session.type`, `.text`, `.copy`,
   `.paste`, `.selectall`, `.search`, `.background`, `.lead`, `.swap`, `.focus`, `.resize`, `.split`,
   `.split.close`, `.scratch`, `.restart`, `.restore`, `session.overlay.open`, `session.hud.open`, a floating
   `session.overlay.resize`, a terminal-style `ask.open` (the default), and `surface.zoom`/`surface.cursor` aimed at
   the page explicitly. Close, rename, flag, tint, status, notify, and the page's own reload, navigate,
-  result and submit keep working. The dashboard leaves page companions out. Read back from the tree node's
+  result and submit keep working. The dashboard leaves page sessions out. Read back from the tree node's
   `content`.
+- `session overlay open --html FILE|--url URL --page [page flags] [--follow] [--target] [--window W]` - open the
+  page as a top-level page session: a sidebar row of its own that shows the page and never starts a shell,
+  placed right after the target's group (the target and its companions) in the target's workspace;
+  `session move` puts it anywhere else. It holds companions like any session (`session new --parent`, New
+  Companion, the page's own `session.companion.new`), and Convert to Companion works on it. The page flags,
+  refusals and `--block` are those of `--companion`, which `--page` cannot be combined with; `--follow` selects
+  the new row. A target attached from another Mac only places it: the page is this Mac's. On a row of a remote
+  window, agterm-server creates it. Wire command
+  `session.page`. Returns `result.id` (the new session; the human output prints it) and `result.pageID`.
+  Against an app too old for page sessions the CLI prints `error: the running app is too old for page
+  sessions`, with nothing created. Read back from the tree node's `content: "page"` with no `parent`.
+  Closing and the refused commands work as for a page companion. Every local page row, top-level or companion,
+  is saved with its source and flags and comes back with its companions after a relaunch, in every restore
+  mode, and from Recent Closed; when its file or server is gone, the row stays with the error and a Reload
+  button. A saved `--js` file page runs its scripts with the full control bridge at every launch and every
+  reopen, with no user action, which is more than a restored `--command` gets (that reruns only in Re-run
+  commands mode); a URL page gets no bridge. A row attached from another Mac is never saved.
 - `session overlay reload [--current] [--pane left|right] [--target] [--window W]` — reload an HTML
   overlay: the file or URL it was opened with (after you rewrote the artifact), or with `--current` the
   page it shows now. Errors `no overlay`, and `the overlay is not an html page` for a program.
@@ -1470,6 +1534,58 @@ shell (no controlling terminal — `/dev/tty` errors). See examples.md for usage
 
 `window resize`/`move` are control-native (no GUI equivalent — the title bar already drags-to-resize).
 
+## remote server
+
+A remote window mirrors agterm-server's catalog on a Linux host (docs: agterm.com/docs#remote-server). The
+window commands run on the Mac; `catalog` is served only by agterm-server.
+
+- `window remote open HOST`: open a window mirroring HOST's agterm-server (an ssh destination), or raise
+  the one already showing it; prints the window id. The window's node in `tree` and `window list` carries
+  `remote`: `host`, `catalogID`, `state` (`connecting`, `connected`, `disconnected`, `refused`, with
+  `reason` for the last two; omitted for a closed window), `detachedSessions`, `detachedWorkspaces` and
+  `operations` (`{id, action, session?, workspace?, state}` for an action still on its way or whose outcome
+  was lost), each omitted when empty. Its session rows add `ended` (the server lost the primary and split panes; a
+  scratch may still run),
+  `pending` (`pending` or `unknown`) and `scratchBacked` (the scratch is the server's daemon).
+- `window remote dismiss [ID]`: drop the marks for actions whose outcome was lost; it neither undoes nor
+  resends them. The window settles a mark through `catalog op` by itself when the server still knows it.
+- `session detach [--target T ...]` / `workspace detach [--target T]`: hide a remote window's rows on this
+  Mac, leaving them running on the server; a parent takes its companions. `session close` ends them instead.
+- `session reattach --target ID` / `workspace reattach --target ID`: show a detached row again; ID as
+  `remote.detachedSessions` / `detachedWorkspaces` list it (`active` and an ended session are refused;
+  `session close` removes an ended one).
+- `catalog subscribe`: the stream a remote window runs over ssh; not for use by hand.
+- `catalog op OPID [--epoch E --rev N]`: what became of an operation id: `applied` (with its revision),
+  `noop`, `refused` (with the error), `fenced` or `unknown`; an id the server does not hold is recorded so
+  the command is refused if it arrives later.
+- Operation ids: the session and workspace structure commands, and `session overlay open` with `--page` or
+  `--companion` (`--op-id requires --companion or --page` otherwise), take `--op-id ID --epoch E`; the server keeps
+  the last 512 receipts, so the same id within them is not run twice, and answers `result.receipt` `{opID, epoch, outcome, rev?, error?}`; `--expect-panes ID,ID` and `session
+  scratch --expect-scratch ID|none` refuse a target that changed; all need `--op-id`. A Mac app refuses an
+  operation id.
+- On agterm-server: one window (the catalog, `--window` takes its id or `active`); `NAME is not available on
+  agterm-server` for every command it does not serve (window mutations, sidebar, font, theme, keymap, quick,
+  dashboard, zoom and more; `window list` and the presenter bridges `zmx present`, `run-job`, `page-serve` and
+  `page-attach` are served); no `--wait` on `session new`; `ask open --style gui` needs `--target`; a pick needs a
+  session, from `--session` or the calling pane's own. Asks, picks, pages and overlay jobs are held until a Mac
+  presents the session, listed in its `interactions` (`{kind, id, state, deadline?}`); only an ask or pick ends
+  unanswered, at its `--timeout`. Log pages and `session overlay follow`, `search`, `wrap` and `changes` are
+  served; a text action on a page held for no Mac answers `the viewer showing this overlay is gone`. `version` adds
+  `headless: true` and `versions`.
+- Page rows on agterm-server: `session overlay open --page|--companion --html FILE|--url URL` makes a page session
+  or page companion there, FILE a path on the host; a loopback `--url` is refused (`a page on agterm-server's
+  loopback cannot be a page session: no Mac would reach it`), and terminal commands and a terminal `ask open` on the
+  row answer `<cmd>: not available on a page session`; a GUI ask or a pick on it shows on the Mac presenting the row.
+  The catalog lists the row with no panes. A remote window shows it as a page row,
+  each Mac claiming its own view over ssh (`session overlay page-attach`). Without a view the row shows a failed
+  page naming why: `waiting for HOST` and `HOST cannot be reached, retrying` retry on their own, `the page's
+  connection to HOST ended, reconnecting` claims a new view, and a refusal from the server stays shown; detaching
+  and reattaching the row claims again. Only the server's removal closes the row: `session overlay close` on it, as
+  its page's own close, closes it there; `session detach` ends this Mac's view and `session reattach` claims a new
+  one. A page made from a remote window keeps its outcome on the server, where `--block` and `session overlay result
+  --page` read it, after that window closed too. A Mac too old for page rows is sent none, and a companion of a page
+  row shows there as a top-level row.
+
 ## surface
 
 `agtermctl surface zoom [show|hide|toggle] [--target SURFACE_ID|active|quick] [--window W]` — zoom one
@@ -1579,10 +1695,12 @@ Invalid invocations error (rejected at the CLI and re-checked server-side): `--f
 
 ## pick
 
-`agtermctl pick [--prompt TEXT] [--query TEXT] [--select ID] [--allow-custom] [--follow] [--window W] [--no-block]`
+`agtermctl pick [--prompt TEXT] [--query TEXT] [--select ID] [--allow-custom] [--session S] [--timeout SECONDS] [--follow] [--window W] [--no-block]`
 reads choices from stdin and opens a native fuzzy picker in the target window. `pick` defaults to the open
 subcommand, so `agtermctl pick open` is not required. Stdin is read unconditionally, so a call that supplies
-no items needs `< /dev/null` or it blocks.
+no items needs `< /dev/null` or it blocks. `--session S` binds the picker to a session, so it shows wherever
+that session is presented, a remote window included, and reads back as `pick` on the session row.
+`--timeout SECONDS` (at most 86400) cancels it unanswered after that long.
 
 The first non-whitespace input byte selects the format. `[` starts a JSON array of objects with required
 `id` and `label` strings plus an optional `subtitle` and an optional trailing status glyph: `status`
@@ -1652,6 +1770,7 @@ precedence over the role, and the pane must be laid out by its session at open.
 terminal area, excluding the sidebar. An explicit GUI target must be selected in its window;
 GUI pane selectors require it. Terminal asks can coexist with GUI asks and picks.
 `--window W` selects the window; `--follow` raises it without changing session selection.
+`--timeout SECONDS` (at most 86400) cancels the dialog unanswered after that long.
 
 Supply one to six buttons with unique ids and nonempty labels; a question with a field or a list may omit
 them. A token without `=` is both id and label;
@@ -2012,14 +2131,14 @@ so `{AGT_SESSION_NAME}` and `{AGT_SESSION_PWD}` are as untrusted as `{AGT_SELECT
 `$AGT_*` form for any of them:
 
 - `{AGT_SESSION_NAME}` / `$AGT_SESSION_NAME` — the session's display name (the focused pane's terminal title, remote-settable via OSC).
-- `{AGT_SESSION_PWD}` / `$AGT_SESSION_PWD` — the working directory of the pane the command fired from;
-  the scratch terminal reports the main pane's, since it tracks no cwd of its own. For a session opened
-  by `zmx attach` the path can be remote: the session starts with local HOME and follows subsequent cwd
+- `{AGT_SESSION_PWD}` / `$AGT_SESSION_PWD` — the working directory of the pane the command fired from,
+  the scratch terminal included. For a session opened by `zmx attach` the path can be remote: the session starts with local HOME and follows subsequent cwd
   reports. See Remote sessions. On any session the command itself starts in that path only when it
   exists here as a directory, else in local HOME, so a deleted directory does not stop it; the variable
   keeps the reported path either way.
 - `{AGT_SESSION_HOST}` / `$AGT_SESSION_HOST` — the SSH destination of a session opened by `zmx attach`,
   verbatim as given (`user@alias` included); empty for a local session, an `ssh` typed into one included,
+  and from the scratch of an attached session, whose shell runs on this Mac,
   so branch on it: `if [ -n "$AGT_SESSION_HOST" ]; then ssh "$AGT_SESSION_HOST" uptime; fi` (a bare
   `&&` chain exits 1 on a local session and the runner reports that as a failure).
 - `{AGT_SELECTION}` / `$AGT_SELECTION` — the current selection.
@@ -2035,7 +2154,7 @@ so `{AGT_SESSION_NAME}` and `{AGT_SESSION_PWD}` are as untrusted as `{AGT_SELECT
 - Plus the other `$AGT_*` context vars the runner exports.
 
 Built-in action names for `map` include: `new_window`, `new_workspace`, `new_session`,
-`open_directory`, `rename_session`, `duplicate_session`, `new_companion`, `duplicate_companion`, `close_session`, `reopen_recent`, `undo_close`, `clear_status`, `increase_font_size`,
+`open_directory`, `rename_session`, `duplicate_session`, `new_companion`, `duplicate_companion`, `convert_companion`, `close_session`, `reopen_recent`, `undo_close`, `clear_status`, `increase_font_size`,
 `decrease_font_size`, `reset_font_size`, `toggle_split`, `toggle_horizontal_split`, `toggle_scratch`, `toggle_sidebar`,
 `focus_workspace`, `toggle_workspace_filter`, `edit_flagged_sessions`, `edit_focused_workspaces`, `quick_terminal`,
 `session_palette`, `command_palette`, `custom_command_palette`, `dashboard`, and the navigation actions (`previous_session`, `next_session`,
@@ -2097,7 +2216,7 @@ it was ⌘⇧-clicked in a program that does not capture the mouse, when it was 
 session's window has a zoomed terminal, when the session-wide overlay slot is taken, when the saved
 browser store cannot be used, or when the overlay cannot be opened. The exception is a slot holding a page an earlier
 click opened (`clicked` in `htmlOverlays`) that was hidden on this Mac with ⇧⌘J or `session overlay hide`: the click
-replaces it and shows the new page, and a clicked picture, markdown or text file does the same. A page that is only out
+replaces it and shows the new page, and a clicked picture, markdown, HTML or text file does the same. A page that is only out
 of sight under a newer pane overlay, or one the presenting Mac shows, is not replaced.
 A plain `http` link uses the overlay
 only for a host the page could load: an unqualified name such as `localhost`, a `.local` name, or an IP
@@ -2257,12 +2376,14 @@ before the session host existed keeps its own macOS permission identity, so ever
 it asks for the microphone again; the reset ends those sessions' processes at the next launch and recreates
 them under the host, starting their captured commands again where possible. It also covers every session
 whose daemon predates the recorded first launch with this zmx build: live sessions keep the zmx they started
-with through updates, so they miss a zmx change until recreated. agterm quits and reopens itself
+with through updates, so they miss a zmx change until recreated. It also moves every session still under
+the session host of an earlier agterm build or login, which can block local network access after an
+update, to the current host; at every launch agterm asks each earlier host to stop, and one stops once no live session runs under it. agterm quits and reopens itself
 right after answering, so running work in the affected sessions stops and agent conversations may need to be
 resumed by hand; run from inside one of those sessions it kills the calling shell. Other supervised
 sessions are left alone. It refuses outside Live sessions mode, while a mode change waits for a restart,
 on an incomplete pane inventory, and when nothing needs resetting. The reply carries `result.liveReset`
-with the session and pane counts, plus `outdated` sessions when any; the next launch re-checks every session and only ever resets fewer than
+with the session and pane counts, plus `outdated` and `staleHost` sessions when any; the next launch re-checks every session and only ever resets fewer than
 confirmed, and the tree's top-level `liveReset` reports `pending` until the quit and `last` for the launch
 that consumed the reset.
 
@@ -2280,7 +2401,7 @@ and `sessions`, each with `id`, `name`, `windowID`/`windowName` and `workspaceID
 names, group by the ids — neither is unique, so two windows called `main` merge if you group by name),
 `context` when its owner set one, `cwd`, `splitAxis` when it has a split, `status`/`statusColor`/`statusShape`
 as the far side's `tree` reports them (omitted when idle, and from an app too old to send them), `parent` on a
-companion, `content: "page"` on a page companion, `companions` on a top-level session (every companion in
+companion, `content: "page"` on a page session, `companions` on a top-level session (every companion in
 sidebar order as `{id, name}`, attachable or not; `[]` for none, absent from an older origin), and `panes`
 (`{pane, daemon, foreground}`, the last being the argv that pane is running and omitted when none is
 reported). `host` is the ssh destination the REQUESTING app was given, stamped on after decoding: the far
@@ -2288,10 +2409,11 @@ side has no idea which name reached it.
 
 Only a session whose every pane still has a live daemon is listed: attaching to a name that no longer
 exists would CREATE a daemon and hand back a fresh shell wearing it, so an incomplete one is omitted
-rather than offered half. A page companion has no daemon and is listed with empty `panes` when its parent is
-listed; it attaches only under a row already attached from its parent. An empty list is a successful answer and does NOT diagnose the restore mode —
-`zmx list` does that. The far side must be running in `live` mode, which is what puts a daemon behind each
-pane, and be new enough to answer `zmx tree` at all; an older one is refused by name rather than
+rather than offered half. A page has no daemon and is listed with empty `panes`: a top-level page session
+always, a page companion when its parent is listed, and then it attaches only under a row already attached from
+its parent. A row attached from another Mac is never listed. An empty list is a successful answer and does NOT diagnose the restore mode —
+`zmx list` does that. A terminal session needs the far side in `live` mode, which is what puts a daemon behind
+each pane (a page session needs none), and the far side must be new enough to answer `zmx tree` at all; an older one is refused by name rather than
 half-attached. It also needs `agtermctl` installed by the cask or the Help action: a machine merely
 running agterm has no CLI an ssh command can find, and the read fails with exit 127.
 
@@ -2301,7 +2423,7 @@ the destination window's current workspace, selected, with the remote session's 
 after discovery. An invalid or closed destination fails without creating a session. Targeting a background
 window leaves the frontmost window unchanged. `SESSION` is the
 `id` from `zmx tree`, never the name: remote names are editable and repeat across workspaces. Returns the
-new local session's `id`; read `remoteHost` on its tree node. The remote is resolved AGAIN before anything
+new local session's `id`; read `remoteHost` and `remoteSessionID` on its tree node. The remote is resolved AGAIN before anything
 is created, so a session that has gone since the listing fails and creates nothing. A connection that
 starts and later drops is an ordinary pane exit: ssh's own 255 shows a reconnecting bar naming the host and reconnects by itself, with ssh's last
 failed-probe message along the pane's bottom edge and on the pane's `reconnect` in `tree`; any other exit prints
@@ -2312,6 +2434,8 @@ pane's ssh joins an existing `ControlMaster` connection, that master's settings 
 
 A terminal companion attached on its own opens under the one row in the destination window attached from
 its parent, in that row's workspace (`result.parent` names it); with no such row, or more than one, it opens on its own.
+A top-level page session opens as a top-level row in the destination window's current workspace, showing that
+Mac's page through its own channel; with `--companions` its companions attach under it.
 `agtermctl zmx attach HOST SESSION --companions` (`zmx.attach.group`) attaches a top-level session and then
 each of its companions under it from one read, in the origin's companion order when reported and in the
 order of its listed rows from an older origin; a companion's id is refused. The
@@ -2329,7 +2453,8 @@ companions when it is a top-level session. It is the
 `zmx tree`, `pick` and `zmx attach --companions` instead.
 
 A program in an attached session runs on the origin and talks to the origin's agterm, so what it asks
-agterm to draw would show there only. Every attach therefore also opens a presentation stream, and this
+agterm to draw would show there only. Every terminal attach therefore also opens a presentation stream (a page row
+uses its page channel instead and mirrors nothing), and this
 Mac mirrors the origin session's status, its `session context`, its `session info` line, its `notify` notifications, its HUD and
 the layout of panes already attached.
 Nothing has to be set up beyond the `agtermctl` PATH precondition above. What to expect:
@@ -2399,9 +2524,16 @@ Nothing has to be set up beyond the `agtermctl` PATH precondition above. What to
 - An image, markdown or text page (`--image`, `--markdown`, `--text`) follows the same rule. The presenting Mac
   fetches the file over the same channel, the origin serving only that file, or a markdown file's pictures in its
   own folder, under the same size limits, and shows the same page with no bridge; an image opened without a size
-  is sized for that Mac's screen. Its `htmlOverlays` lists `image`, `markdown` or `text` with `replica: true`.
-  A presenting Mac too old for these pages keeps the refusal (`a viewer presents this session`). A log page
-  (`--tail`, `--follow-file`) is refused there, and a clicked `.log` opens as the plain text page.
+  is sized for that Mac's screen. Its `htmlOverlays` lists `image`, `markdown`, `document` or `text` with `replica: true`.
+  A presenting Mac too old for these pages keeps the refusal (`a viewer presents this session`).
+- A presenting Mac whose agterm shows live text pages (its hello lists `page.text`) also shows log pages
+  (`--tail`, `--follow-file`, a clicked `.log` or `.out`). On the origin, `session overlay follow`, `search`, `wrap`
+  and `changes` aimed at such a page run on that Mac and answer with its result, the replies a local page gives, or
+  `presenter did not answer` after 5 seconds. The page's own bar works there, the same commands run there against
+  its copy, and its following, search, wrap and changes read back in the origin's `htmlOverlays[].text`. An older
+  presenting Mac refuses a log page (`session.overlay.open: the Mac presenting this session cannot show a log
+  page`), opens a clicked log as the plain text page, and `search`, `changes` and `wrap` answer `remote page:
+  ... on the Mac that shows it`.
 - When the stream drops, a `--wait` overlay whose program already ended closes on the presenting Mac,
   and a running one keeps running and closes when its ssh ends. Nothing is handed back later.
 - While the stream is not up the row's indicator says so and names the host. It retries on its own, at
@@ -2418,7 +2550,8 @@ after a relaunch whatever the restore mode is.
 The pane reports the far side's working directory, and the local launches that would inherit it pick
 their start directory by one rule: the reported path when it exists here as a directory, else local
 HOME. Those launches are a custom command (its `$AGT_SESSION_PWD` keeps the reported path and
-`$AGT_SESSION_HOST` names the destination), the scratch terminal, an overlay opened without `--cwd`,
+`$AGT_SESSION_HOST` names the destination; one fired from the local scratch gets that shell's directory and an
+empty host), the scratch terminal, an overlay opened without `--cwd`,
 the quick terminal, a local split (the first one on a remote session that arrived without a split, or
 one opened after the attach-time split is closed), Duplicate Session, and New Session when it is set
 to open in the current session's directory. An explicit overlay `--cwd` is used as given. Quote both
@@ -2446,11 +2579,12 @@ its persisted snapshots against what zmx reports. With agterm stopped there is n
 
 Which programs are NOT re-run is controlled by `restore-denylist.conf` in the config directory (one
 command name per line, seeded with the terminal multiplexers `tmux`/`screen`/`zellij`). It is a plain
-user-edited file read at launch — there is no control command for it. Two more things are skipped
+user-edited file read at launch — there is no control command for it. Three more things are skipped
 whatever the denylist says, and the pane starts a plain shell. A control character in the command's
 name or any argument: the restored line is typed, so the line editor reads that byte as an editing key
 rather than as text. A byte sequence that was not valid UTF-8: it is captured lossily, so replaying it
-would run an argument the process never had.
+would run an argument the process never had. A `!` anywhere in a command re-run mode types into a csh or
+tcsh pane: those shells expand it as history even inside quotes.
 
 For a PER-SESSION, per-pane override that pins (or suppresses) what a pane restores, use
 `session restore` (in the session section above): it wins over the captured foreground, bypasses the
@@ -2533,6 +2667,25 @@ the signal when ssh was killed), and 64 for a usage error. Failures before the c
   by `ssh exited 3; xterm-ghostty was not installed`.
 - `ssh exited N; xterm-ghostty was not installed` — any other remote failure; ssh's own stderr above it
   says what happened.
+
+## server
+
+`agtermctl server install DESTINATION [--from FILE] [-p PORT] [-i FILE ...] [-J HOST] [-F FILE]` — macOS only: install or
+upgrade agterm-server on a Linux host. Local-only like `terminfo install`, with the same `DESTINATION`, the
+same four ssh options, the same installer-owned execution settings and the same interactive connection.
+
+- It installs the release matching the app bundle this `agtermctl` belongs to: `uname -m` on the host picks
+  `aarch64` or `x86_64`, the tarball comes from that version's GitHub release, and no archive bytes are
+  sent to the host until its sha256 matches the line in the bundle's `Contents/Resources/agterm-server.sha256`.
+- The tarball unpacks into `~/.local/lib/agterm-server` by rename, so a running server keeps its binary,
+  then its `install.sh` sets up the systemd user service, lingering and the agent hooks.
+- `--from FILE` uses a tarball already on this Mac instead of downloading one: its bytes are read once into a private
+  file, and that copy must match the same sha256 line for the host's architecture.
+- A CLI with no checksum file (a development build, or a copy outside the app) is refused;
+  `scripts/install-server.sh HOST` installs from a checkout.
+- Installation outcomes: exit 0 installed (`installed agterm-server VERSION on DESTINATION`), 3 installed with
+  the agent hooks incomplete, 1 for any refusal or failure with the reason on stderr. A usage error keeps the
+  parser's own exit code.
 
 ## version
 
@@ -2625,9 +2778,9 @@ restore; a `session restore --pane right` on a session with no split also return
 `window not open`
 (resize/move/`--window`), `unknown theme: <name>` (theme set), `unknown sound: <name>` (session status --sound),
 `invalid color (expected #rrggbb)` (session status --color),
-`invalid shape: <value> (circle|square|triangle|triangle-down|play|diamond|capsule|seal|star|bolt|bell)` (session status --shape over the
+`invalid shape: <value> (circle|square|triangle|triangle-down|play|diamond|capsule|seal|star|bolt|bell|checkmark)` (session status --shape over the
 raw socket; the `agtermctl` CLI rejects the same value locally with
-`shape must be one of: circle, square, triangle, triangle-down, play, diamond, capsule, seal, star, bolt, bell`),
+`shape must be one of: circle, square, triangle, triangle-down, play, diamond, capsule, seal, star, bolt, bell, checkmark`),
 `--pane must be left, right, or scratch` (the `--pane` value check; the message intentionally lists the
 canonical read-back names while the role and position aliases documented above are accepted. The
 `agtermctl` CLI rejects a bad pane with this for session status/type/text/paste, and over the raw socket

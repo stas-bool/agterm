@@ -128,15 +128,6 @@ extension ControlDispatcher {
             }
         case .sessionOverlayText:
             return dispatchSessionOverlayText(request)
-        case .sessionOverlayFollow:
-            guard let mode = ControlToggleMode.parse(request.args?.mode) else {
-                return ControlResponse(ok: false, error: "invalid overlay follow mode: \(request.args?.mode ?? "toggle")")
-            }
-            switch parseOverlayPane(request.args?.pane) {
-            case .rejected(let response): return response
-            case .pane(let pane):
-                return actions.setSessionOverlayFollow(request.target, window: request.args?.window, pane: pane, mode: mode)
-            }
         case .sessionOverlayHide, .sessionOverlayShow, .sessionOverlayToggle:
             let mode: OverlayVisibilityMode = request.cmd == .sessionOverlayHide ? .hide
                 : (request.cmd == .sessionOverlayShow ? .show : .toggle)
@@ -151,7 +142,7 @@ extension ControlDispatcher {
                 return ControlResponse(ok: false, error: "session.overlay.job.run requires a job id")
             }
             guard UUID(uuidString: job) != nil else { return ControlResponse(ok: false, error: "invalid job id") }
-            return actions.claimOverlayJob(job)
+            return actions.claimOverlayJob(job, token: request.args?.token)
         case .sessionOverlayPageServe:
             guard let token = request.target?.trimmedOrNil else {
                 return ControlResponse(ok: false, error: "session.overlay.page.serve requires a page token")
@@ -249,7 +240,7 @@ extension ControlDispatcher {
 
     private static func markdownContent(_ path: String, args: ControlArgs?) -> OverlayContent {
         let reject = { (error: String) in OverlayContent.rejected(ControlResponse(ok: false, error: error)) }
-        let flags = [args?.wait, args?.navigation, args?.javascript, args?.chromeless, args?.persistent, args?.browse]
+        let flags = [args?.wait, args?.javascript, args?.chromeless, args?.persistent, args?.browse]
         if args?.cwd != nil || flags.contains(true) { return reject(OverlayHtmlError.markdownOptions) }
         guard path.hasPrefix("/") else { return reject(OverlayHtmlError.markdownNotAbsolute) }
         let url = URL(fileURLWithPath: path).standardizedFileURL
@@ -323,6 +314,47 @@ extension ControlDispatcher {
         case .rejected(let response): return response
         case .pane(let pane):
             return await actions.searchSessionOverlay(request.target, window: request.args?.window, pane: pane, request: search)
+        }
+    }
+
+    /// dispatchSessionOverlayFollow takes an optional mode, toggle when absent.
+    func dispatchSessionOverlayFollow(_ request: ControlRequest) async -> ControlResponse {
+        guard let mode = ControlToggleMode.parse(request.args?.mode) else {
+            return ControlResponse(ok: false, error: "invalid overlay follow mode: \(request.args?.mode ?? "toggle")")
+        }
+        switch parseOverlayPane(request.args?.pane) {
+        case .rejected(let response): return response
+        case .pane(let pane):
+            return await actions.setSessionOverlayFollow(request.target, window: request.args?.window, pane: pane, mode: mode)
+        }
+    }
+
+    /// dispatchSessionOverlayWrap takes an optional mode, toggle when absent.
+    func dispatchSessionOverlayWrap(_ request: ControlRequest) async -> ControlResponse {
+        guard let mode = ControlToggleMode.parse(request.args?.mode) else {
+            return ControlResponse(ok: false, error: "invalid overlay wrap mode: \(request.args?.mode ?? "toggle")")
+        }
+        switch parseOverlayPane(request.args?.pane) {
+        case .rejected(let response): return response
+        case .pane(let pane):
+            return await actions.setSessionOverlayWrap(request.target, window: request.args?.window, pane: pane, mode: mode)
+        }
+    }
+
+    /// dispatchSessionOverlayChanges takes a required `to` of next or prev.
+    func dispatchSessionOverlayChanges(_ request: ControlRequest) async -> ControlResponse {
+        let forward: Bool
+        switch request.args?.to {
+        case "next": forward = true
+        case "prev": forward = false
+        case nil: return ControlResponse(ok: false, error: "session.overlay.changes requires to next or prev")
+        case let to?: return ControlResponse(ok: false, error: "invalid overlay changes direction: \(to)")
+        }
+        switch parseOverlayPane(request.args?.pane) {
+        case .rejected(let response): return response
+        case .pane(let pane):
+            return await actions.stepSessionOverlayChanges(request.target, window: request.args?.window, pane: pane,
+                                                           forward: forward)
         }
     }
 }

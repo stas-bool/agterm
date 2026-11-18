@@ -10,6 +10,8 @@ public enum HtmlOverlayCommandFailure: Error, Equatable, Sendable {
     case unknownSession, noOverlay, notHtml
     /// replica: the page is shown here for another Mac, whose ledger alone takes its answer.
     case replica
+    /// pinned: the page failed in a way a reload cannot fix; carries that failure.
+    case pinned(String)
 }
 
 extension HtmlOverlayOpenFailure {
@@ -32,6 +34,7 @@ extension HtmlOverlayCommandFailure {
         case .noOverlay: return OverlayHtmlError.noOverlay
         case .notHtml: return OverlayHtmlError.notHtml
         case .replica: return OverlayHtmlError.replicaSubmit
+        case .pinned(let failure): return failure
         }
     }
 }
@@ -79,10 +82,46 @@ public enum TextSearchFailure: Error, Equatable, Sendable {
     }
 }
 
+/// TextChangesFailure is why a `session.overlay.changes` step was refused.
+public enum TextChangesFailure: Error, Equatable, Sendable {
+    case page(HtmlOverlayCommandFailure)
+    case notDiff
+    case remote
+    case notLoaded
+    case noChanges
+
+    /// message is the control error for this refusal.
+    public var message: String {
+        switch self {
+        case .page(let failure): return failure.message
+        case .notDiff: return "no diff page"
+        case .remote: return "remote page: step it on the Mac that shows it"
+        case .notLoaded: return "page not loaded"
+        case .noChanges: return "no changes"
+        }
+    }
+}
+
+/// TextWrapFailure is why a `session.overlay.wrap` request was refused.
+public enum TextWrapFailure: Error, Equatable, Sendable {
+    case page(HtmlOverlayCommandFailure)
+    case notText
+    case remote
+
+    /// message is the control error for this refusal.
+    public var message: String {
+        switch self {
+        case .page(let failure): return failure.message
+        case .notText: return "no text page"
+        case .remote: return "remote page: wrap it on the Mac that shows it"
+        }
+    }
+}
+
 extension AppStore {
     /// openHtmlOverlay opens a page in the session-wide slot (`pane` nil) or one pane's slot, with the slot
     /// rules of `openOverlay`/`openPaneOverlay`. Refused when the placement rule hands the slot to the presenting
-    /// Mac, which `openRemotePage` serves. NOT persisted.
+    /// Mac, which `openRemotePage` serves. Persisted only as a page row's own page (`PageSnapshot`).
     public func openHtmlOverlay(_ sessionID: UUID, pane: OverlayPane?, overlay: HtmlOverlay, sizePercent: Int?,
                                 points: OverlayPointSize = OverlayPointSize(),
                                 backgroundColor: String? = nil) -> HtmlOverlayOpenFailure? {
@@ -151,6 +190,7 @@ extension AppStore {
         case .success(let found): page = found
         case .failure(let failure): return failure
         }
+        if page.loadFailurePinned { return .pinned(page.loadError ?? "") }
         updateHtmlOverlay(page.id) {
             $0.reloadRevision += 1
             $0.reloadTarget = target
@@ -165,8 +205,19 @@ extension AppStore {
     /// a session hidden by an undoable close. No-op once the page has left its slot.
     public func setHtmlLoadState(_ id: UUID, state: HtmlLoadState, error: String?) {
         updateHtmlOverlay(id) {
+            guard !$0.loadFailurePinned else { return }
             $0.loadState = state
             $0.loadError = error
+            if state == .loaded { $0.contentShown = true }
+        }
+    }
+
+    /// failHtmlOverlay fails page `id` for good: later load reports and reloads leave `error` in place.
+    public func failHtmlOverlay(_ id: UUID, error: String) {
+        updateHtmlOverlay(id) {
+            $0.loadState = .failed
+            $0.loadError = error
+            $0.loadFailurePinned = true
         }
     }
 
@@ -184,8 +235,9 @@ extension AppStore {
         case .success(let found): page = found
         case .failure(let failure): return .failure(.page(failure))
         }
-        if page.replicaOf != nil { return .failure(.page(.replica)) }
-        guard let state = page.logState else { return .failure(.notLog) }
+        guard let state = page.logState else {
+            return .failure(page.replicaOf == nil || page.source.kind == .text ? .notLog : .page(.replica))
+        }
         let following: Bool
         switch mode {
         case .on: following = true
@@ -217,25 +269,26 @@ extension AppStore {
         }
     }
 
-    /// textSearchPage finds the local text page in the slot `pane` addresses, for a search request. A slot the placement
-    /// rule hands to the presenting Mac is refused, since presentation state carries no search.
+    /// textSearchPage finds the text page in the slot `pane` addresses, for a search request: a local one, or one this Mac
+    /// shows for another Mac. A slot the placement rule hands to the presenting Mac is refused.
     public func textSearchPage(_ sessionID: UUID, pane: OverlayPane?) -> Result<HtmlOverlay, TextSearchFailure> {
         if pageBelongsRemote(sessionID, pane: pane) { return .failure(.remote) }
         switch htmlOverlay(sessionID, pane: pane) {
         case .failure(let failure): return .failure(.page(failure))
         case .success(let page):
-            guard case .text = page.source else { return .failure(.notText) }
+            guard page.source.kind == .text else { return .failure(.notText) }
             return .success(page)
         }
     }
 
-    /// setTextSearch sets text page `id`'s query, an empty one closing the search, from control or the page's own
-    /// field. A change bumps `searchRevision`, clears the report, emits `tree.changed` and returns the new revision;
-    /// nil for no change or a page that is not a text page.
+    /// setTextSearch sets text page `id`'s query, cut to `TextSearch.maxQuery`, an empty one closing the search, from
+    /// control or the page's own field. A change bumps `searchRevision`, clears the report, emits `tree.changed` and
+    /// returns the new revision; nil for no change or a page that is not a text page.
     @discardableResult public func setTextSearch(_ id: UUID, query: String) -> Int? {
+        let query = String(query.prefix(TextSearch.maxQuery))
         var revision: Int?
         updateHtmlOverlay(id) {
-            guard case .text = $0.source, ($0.textSearch?.query ?? "") != query else { return }
+            guard $0.source.kind == .text, ($0.textSearch?.query ?? "") != query else { return }
             $0.searchRevision += 1
             $0.textSearch = query.isEmpty ? nil : TextSearch(query: query)
             revision = $0.searchRevision
@@ -253,6 +306,60 @@ extension AppStore {
             search.current = current
             if search != $0.textSearch { $0.textSearch = search }
         }
+    }
+
+    /// textChangesPage finds the local diff page in the slot `pane` addresses, for a change step, with the slot
+    /// refusals of `textSearchPage`.
+    public func textChangesPage(_ sessionID: UUID, pane: OverlayPane?) -> Result<HtmlOverlay, TextChangesFailure> {
+        switch textSearchPage(sessionID, pane: pane) {
+        case .failure(.page(let failure)): return .failure(.page(failure))
+        case .failure(.remote): return .failure(.remote)
+        case .failure: return .failure(.notDiff)
+        case .success(let page):
+            switch page.source {
+            case .text(let path, _), .replica(let path, .text):
+                guard page.textLog == nil, TextPage.isDiff(file: path) else { return .failure(.notDiff) }
+                return .success(page)
+            default:
+                return .failure(.notDiff)
+            }
+        }
+    }
+
+    /// setTextChangesReport records a diff page's count and current change, nil clearing it while a fresh read is
+    /// under way. Never emitted, like `setTextSearchReport`.
+    public func setTextChangesReport(_ id: UUID, changes: TextChanges?) {
+        updateHtmlOverlay(id) {
+            guard $0.source.kind == .text, $0.textChanges != changes else { return }
+            $0.textChanges = changes
+        }
+    }
+
+    /// setTextWrap applies `mode` to the text page in the slot `pane` addresses, with the slot refusals of
+    /// `textSearchPage`, and returns whether it now wraps.
+    public func setTextWrap(_ sessionID: UUID, pane: OverlayPane?, mode: ControlToggleMode) -> Result<Bool, TextWrapFailure> {
+        let page: HtmlOverlay
+        switch textSearchPage(sessionID, pane: pane) {
+        case .success(let found): page = found
+        case .failure(.page(let failure)): return .failure(.page(failure))
+        case .failure(.remote): return .failure(.remote)
+        case .failure: return .failure(.notText)
+        }
+        let wrapped = mode.desiredValue(current: page.textWrap)
+        setTextWrap(page.id, wrapped: wrapped)
+        return .success(wrapped)
+    }
+
+    /// setTextWrap records whether text page `id` wraps long lines, from control or the page's own toggle. A change
+    /// emits `tree.changed`; any other page is left alone.
+    public func setTextWrap(_ id: UUID, wrapped: Bool) {
+        var changed = false
+        updateHtmlOverlay(id) {
+            guard $0.source.kind == .text, $0.textWrap != wrapped else { return }
+            $0.textWrap = wrapped
+            changed = true
+        }
+        if changed { scheduleTreeChanged() }
     }
 
     /// htmlOverlaySlot finds the slot holding page `id` in a visible session, nil once the page left it.
@@ -288,13 +395,16 @@ extension AppStore {
 
     private func htmlOverlayNode(_ page: HtmlOverlay, pane: OverlayPane?, zoom: Double?, hidden: Bool,
                                  remote: Bool = false) -> ControlHtmlOverlayNode {
-        var file: String?, cwd: String?, url: String?, image: String?, markdown: String?, text: ControlTextOverlayNode?
+        var file: String?, cwd: String?, url: String?, image: String?, markdown: String?, document: String?
+        var text: ControlTextOverlayNode?
         switch page.source {
         case .file(let path, let grantRoot): (file, cwd) = (path, grantRoot)
         case .url(let address): url = address.absoluteString
         case .replica(let path, .html): file = path
         case .image(let path), .replica(let path, .image): image = path
         case .markdown(let path), .replica(let path, .markdown): markdown = path
+        case .document(let path), .replica(let path, .document): document = path
+        case .unreadable: break
         case .text(let path, let line), .replica(let path, .text(let line)):
             let log = page.logState
             text = ControlTextOverlayNode(file: path, language: TextPage.language(forFile: path), line: line,
@@ -303,9 +413,11 @@ extension AppStore {
                                           unreadable: log?.report.unreadable,
                                           search: page.textSearch.map {
                                               ControlTextSearchNode(query: $0.query, matches: $0.matches, current: $0.current)
-                                          })
+                                          },
+                                          changes: page.textChanges.map { ControlTextChangesNode(count: $0.count, current: $0.current) },
+                                          wrap: page.textWrap ? true : nil)
         }
-        return ControlHtmlOverlayNode(pane: pane?.rawValue, file: file, cwd: cwd, url: url, image: image, markdown: markdown, text: text,
+        return ControlHtmlOverlayNode(pane: pane?.rawValue, file: file, cwd: cwd, url: url, image: image, markdown: markdown, document: document, text: text,
                                       state: page.loadState.rawValue,
                                       error: page.loadError, page: page.current?.page, title: page.current?.title,
                                       canGoBack: page.current?.canGoBack, canGoForward: page.current?.canGoForward,

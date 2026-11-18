@@ -64,6 +64,7 @@ class HtmlPageTestCase: XCTestCase {
         registry.sharing = SystemHtmlSharing()
         registry.setZoom(1)
         registry.dispatch = nil
+        registry.closePageSession = nil
         store.closeSession(session.id)
         try await afterSessionClose()
         try? FileManager.default.removeItem(at: directory)
@@ -82,8 +83,9 @@ class HtmlPageTestCase: XCTestCase {
         }
     }
 
-    func waitForScript(_ script: String, in view: WKWebView, _ matches: @escaping (String) -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(10)
+    func waitForScript(_ script: String, in view: WKWebView, timeout: TimeInterval = 10,
+                       _ matches: @escaping (String) -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
         while true {
             let value = try await view.evaluateJavaScript("String(\(script))") as? String ?? ""
             if matches(value) { return }
@@ -117,8 +119,9 @@ class HtmlPageTestCase: XCTestCase {
     /// fetched lists the origin paths a `replicaLink` page asked for, in order.
     var fetched: [String] = []
 
-    /// replicaLink serves a replica page's fetches from this Mac's disk, as a page channel serves them from the origin.
-    func replicaLink() -> HtmlReplicaLink {
+    /// replicaLink serves a replica page's fetches, and the tail of `log` when set, from this Mac's disk, as a page
+    /// channel serves them from the origin.
+    func replicaLink(log: String? = nil) -> HtmlReplicaLink {
         HtmlReplicaLink(fetch: { [weak self] path, _ in
             self?.fetched.append(path)
             let data = try Data(contentsOf: URL(fileURLWithPath: path))
@@ -126,7 +129,10 @@ class HtmlPageTestCase: XCTestCase {
                 $0.yield(data)
                 $0.finish()
             })
-        }, bridge: { _ in throw RemotePageChannel.Failure.closed })
+        }, bridge: { _ in throw RemotePageChannel.Failure.closed }, logTail: { stamp in
+            guard let log else { throw RemotePageChannel.Failure.refused("not a log page") }
+            return try BoundedFile.readTail(path: log, maxBytes: TextPage.maxTailBytes, unchangedFrom: stamp).get()
+        })
     }
 
     /// openReplica opens a page shown for another Mac whose file is `path` there.

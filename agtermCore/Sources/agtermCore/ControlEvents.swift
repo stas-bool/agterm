@@ -25,6 +25,8 @@ public struct ControlEventPayload: Codable, Sendable, Equatable {
     public var pane: String?
     public var blink: Bool?
     public var color: String?
+    /// The per-call emoji/text glyph override; nil/omitted when the SF-Symbol silhouette is in use.
+    public var glyph: String?
     /// The `status` event's per-call glyph silhouette (a `StatusShape` raw value), nil when the glyph uses the
     /// Settings shape / default plain circle. A shape-only change emits a `status` event, unexplainable without it.
     public var shape: String?
@@ -46,12 +48,15 @@ public struct ControlEventPayload: Codable, Sendable, Equatable {
     public var from: String?
     /// The `message` event's message id; the body is never carried.
     public var messageID: String?
+    /// The `remote.opened` / `remote.closed` row's session id on its origin, the id `zmx attach` takes.
+    public var remoteSessionID: String?
 
     public init(name: String? = nil, status: String? = nil, pane: String? = nil,
-                blink: Bool? = nil, color: String? = nil, shape: String? = nil,
+                blink: Bool? = nil, color: String? = nil, glyph: String? = nil, shape: String? = nil,
                 previous: String? = nil, title: String? = nil, body: String? = nil,
                 host: String? = nil, paneID: String? = nil, parent: String? = nil,
-                from: String? = nil, messageID: String? = nil) {
+                from: String? = nil, messageID: String? = nil, remoteSessionID: String? = nil) {
+        self.remoteSessionID = remoteSessionID
         self.parent = parent
         self.from = from
         self.messageID = messageID
@@ -60,6 +65,7 @@ public struct ControlEventPayload: Codable, Sendable, Equatable {
         self.pane = pane
         self.blink = blink
         self.color = color
+        self.glyph = glyph
         self.shape = shape
         self.previous = previous
         self.title = title
@@ -205,12 +211,12 @@ public final class ControlEventRing {
         guard let cursor else { return .batch(anchor) }
         guard cursor.run == runID else { return .failure(.runChanged, anchor: anchor) }
         guard cursor.after <= currentSequence else { return .failure(.cursorAhead, anchor: anchor) }
-        if let oldest = entries.first?.seq, cursor.after < oldest - 1 {
-            return .failure(.cursorExpired, anchor: anchor)
-        }
+        guard cursor.after < currentSequence, let oldest = entries.first?.seq else { return .batch(anchor) }
+        guard cursor.after >= oldest - 1 else { return .failure(.cursorExpired, anchor: anchor) }
 
+        // subtract the boundary first to avoid UInt64 underflow at after == oldest - 1
         var items: [ControlEvent] = []
-        for event in entries where event.seq > cursor.after {
+        for event in entries[Int(cursor.after - (oldest - 1))...] {
             guard kinds == nil || kinds!.contains(event.kind) else { continue }
             items.append(event)
             if items.count == limit {

@@ -9,11 +9,13 @@ final class GhosttySurfaceViewInputTests: XCTestCase {
 
     private final class Followed {
         var opened: [URL] = []
+        var selected: [(UUID, LinkPolicy.ClickOrigin, UUID?)] = []
         var revealed: [URL] = []
         var overlaid: [(URL, UUID, Int?)] = []
         var images: [(URL, UUID)] = []
         var markdowns: [(URL, UUID, Int?)] = []
         var texts: [LinkPolicy.TextLink] = []
+        var documents: [(URL, UUID, Int?)] = []
     }
 
     private final class ExistsProbe: @unchecked Sendable {
@@ -35,6 +37,7 @@ final class GhosttySurfaceViewInputTests: XCTestCase {
     private func recordLinks(mode: LinkOpenMode, overlayOpens: Bool) -> Followed {
         let followed = Followed()
         LinkOpener.shared.mode = { mode }
+        LinkOpener.shared.selectSession = { followed.selected.append(($0, $1, $2)) }
         LinkOpener.shared.open = { followed.opened.append($0) }
         LinkOpener.shared.reveal = { followed.revealed.append($0) }
         LinkOpener.shared.overlay = { url, session, percent in
@@ -51,6 +54,10 @@ final class GhosttySurfaceViewInputTests: XCTestCase {
         }
         LinkOpener.shared.text = { link, done in
             followed.texts.append(link)
+            done(overlayOpens)
+        }
+        LinkOpener.shared.document = { url, session, percent, done in
+            followed.documents.append((url, session, percent))
             done(overlayOpens)
         }
         LinkOpener.shared.exists = { _ in false }
@@ -86,6 +93,89 @@ final class GhosttySurfaceViewInputTests: XCTestCase {
         let remoteSession = Session(initialCwd: NSTemporaryDirectory(), remoteHost: "buildbox")
         remote.session = remoteSession
         XCTAssertEqual(remote.linkClickOrigin, .remotePane(remoteSession.id))
+    }
+
+    func testRelativeLinksInALocalScratchResolveAgainstItsOwnCwd() {
+        let store = AppStore(persistence: PersistenceStore(directory: FileManager.default.temporaryDirectory
+            .appendingPathComponent("agterm-scratch-link-\(UUID().uuidString)")))
+        let workspace = store.addWorkspace(name: "work")
+        guard let session = store.addSession(toWorkspace: workspace.id, cwd: "/tmp/main", remoteHost: "box") else {
+            return XCTFail("no session")
+        }
+        let scratch = bareSurface()
+        scratch.watermarkSession = session
+        XCTAssertNil(scratch.linkClickCwd)
+
+        session.scratchSurface = scratch
+        session.scratchCwd = "/tmp/main/docs"
+        XCTAssertEqual(scratch.linkClickCwd, "/tmp/main/docs")
+
+        store.bindRemote(RemoteBinding(remoteSessionID: "r", daemonsByLocalPane: [:], presentationVersion: 1, catalogOwned: true),
+                         forSession: session.id)
+        session.scratchDaemon = Session.ScratchDaemon(identity: UUID(), shown: true)
+        XCTAssertNil(scratch.linkClickCwd)
+    }
+
+    func testCommandClickOnAnOSC8SessionLinkSelectsItsTarget() throws {
+        let id = UUID()
+        let fixture = try LinkClickFixture(printing: "\\033]8;;agterm://session/\(id.uuidString)\\033\\\\example session\\033]8;;\\033\\\\")
+        defer { fixture.close() }
+        let followed = recordLinks(mode: .overlay, overlayOpens: true)
+        fixture.move(flags: [.command])
+        fixture.click(flags: [.command])
+        fixture.wait { !followed.selected.isEmpty }
+        XCTAssertEqual(followed.selected.map(\.0), [id], fixture.geometry)
+        XCTAssertEqual(followed.selected.map(\.1), [fixture.surface.linkClickOrigin])
+        XCTAssertEqual(followed.selected.map(\.2), [fixture.surface.linkClickPane])
+        XCTAssertTrue(followed.opened.isEmpty)
+    }
+
+    func testSessionLinkIntentsPreserveThePaneAndRevealDoesNothing() {
+        let session = Session(initialCwd: NSTemporaryDirectory())
+        let pane = bareSurface()
+        pane.session = session
+        let id = UUID()
+        let raw = "agterm://session/\(id.uuidString)"
+        let followed = recordLinks(mode: .overlay, overlayOpens: true)
+        pane.openLink(raw, intent: .reveal)
+        XCTAssertTrue(followed.selected.isEmpty)
+        XCTAssertTrue(followed.revealed.isEmpty)
+        pane.openLink(raw, intent: .browser)
+        pane.openLink(raw, intent: .normal)
+        XCTAssertEqual(followed.selected.map(\.0), [id, id])
+        XCTAssertEqual(followed.selected.map(\.1), [.pane(session.id), .pane(session.id)])
+        XCTAssertEqual(followed.selected.map(\.2), [session.paneIdentity, session.paneIdentity])
+        XCTAssertTrue(followed.revealed.isEmpty)
+        XCTAssertTrue(followed.opened.isEmpty)
+    }
+
+    func testCommandOptionSessionLinkClicksDoNothing() throws {
+        let fixture = try LinkClickFixture(printing: "\\033]8;;agterm://session/\(UUID().uuidString)\\033\\\\example session\\033]8;;\\033\\\\")
+        defer { fixture.close() }
+        let followed = recordLinks(mode: .overlay, overlayOpens: true)
+        let chords: [NSEvent.ModifierFlags] = [[.command, .option], [.command, .option, .shift]]
+        for flags in chords {
+            fixture.move(flags: flags)
+            fixture.click(flags: flags)
+        }
+        fixture.move(flags: [.command])
+        fixture.click(flags: [.command])
+        fixture.wait { !followed.selected.isEmpty }
+        XCTAssertEqual(followed.selected.count, 1, fixture.geometry)
+        XCTAssertTrue(followed.revealed.isEmpty)
+        XCTAssertTrue(followed.opened.isEmpty)
+    }
+
+    func testAHudSessionLinkNeverSelects() {
+        let hud = bareSurface()
+        hud.focusSession = Session(initialCwd: NSTemporaryDirectory())
+        hud.hudBodyFile = "/tmp/agterm-test-hud-body-missing"
+        defer { hud.hudBodyFile = nil }
+        let followed = recordLinks(mode: .overlay, overlayOpens: true)
+        hud.openLink("agterm://session/\(UUID().uuidString)", intent: .normal)
+        XCTAssertTrue(followed.selected.isEmpty)
+        XCTAssertTrue(followed.opened.isEmpty)
+        XCTAssertTrue(followed.revealed.isEmpty)
     }
 
     func testAPaneImagePathShowsOverTheSessionAndRevealsWhenItCannot() {
@@ -126,6 +216,25 @@ final class GhosttySurfaceViewInputTests: XCTestCase {
         let refused = recordLinks(mode: .overlay, overlayOpens: false)
         pane.openLink("file:///tmp/notes.md", intent: .normal)
         XCTAssertEqual(refused.markdowns.count, 1)
+        XCTAssertEqual(refused.revealed, [url])
+    }
+
+    func testAPaneHtmlPathOpensAtItsModeSizeAndRevealsWhenItCannot() {
+        let session = Session(initialCwd: NSTemporaryDirectory())
+        let pane = bareSurface()
+        pane.session = session
+        let url = URL(fileURLWithPath: "/tmp/pr.html", isDirectory: false)
+
+        let shown = recordLinks(mode: .overlay75, overlayOpens: true)
+        pane.openLink("/tmp/pr.html", intent: .normal)
+        XCTAssertEqual(shown.documents.map(\.0), [url])
+        XCTAssertEqual(shown.documents.map(\.1), [session.id])
+        XCTAssertEqual(shown.documents.map(\.2), [75])
+        XCTAssertTrue(shown.revealed.isEmpty)
+
+        let refused = recordLinks(mode: .overlay, overlayOpens: false)
+        pane.openLink("file:///tmp/pr.html", intent: .normal)
+        XCTAssertEqual(refused.documents.count, 1)
         XCTAssertEqual(refused.revealed, [url])
     }
 
@@ -270,17 +379,75 @@ final class GhosttySurfaceViewInputTests: XCTestCase {
         XCTAssertTrue(followed.opened.isEmpty)
     }
 
-    func testARemotePaneIgnoresABarePath() {
+    private final class Forwarded {
+        var clicks: [RemoteLinkClick] = []
+        var refusals: [(UUID, RemoteLinkRefusal)] = []
+    }
+
+    private func recordForwards(answer: RemoteLinkRefusal?) -> Forwarded {
+        let forwarded = Forwarded()
+        LinkOpener.shared.forward = { click in
+            forwarded.clicks.append(click)
+            return answer
+        }
+        LinkOpener.shared.refuse = { forwarded.refusals.append(($0, $1)) }
+        return forwarded
+    }
+
+    func testARemotePaneForwardsAFilePathAndOpensNothingHere() {
         let session = Session(initialCwd: NSTemporaryDirectory(), remoteHost: "buildbox")
         let pane = bareSurface()
         pane.session = session
+        let followed = recordLinks(mode: .overlay75, overlayOpens: true)
+        let forwarded = recordForwards(answer: nil)
 
-        let followed = recordLinks(mode: .overlay, overlayOpens: true)
         pane.openLink("/tmp/shot.png", intent: .normal)
+        pane.openLink("src/main.py:42", intent: .normal)
+        pane.openLink("file:///tmp/notes.md", intent: .browser)
+
+        XCTAssertEqual(forwarded.clicks, [
+            RemoteLinkClick(raw: "/tmp/shot.png", session: session.id, pane: session.paneIdentity, mode: .overlay75),
+            RemoteLinkClick(raw: "src/main.py:42", session: session.id, pane: session.paneIdentity, mode: .overlay75),
+            RemoteLinkClick(raw: "file:///tmp/notes.md", session: session.id, pane: session.paneIdentity, mode: .browser),
+        ])
+        XCTAssertTrue(forwarded.refusals.isEmpty)
+        XCTAssertTrue(followed.images.isEmpty && followed.markdowns.isEmpty && followed.texts.isEmpty)
+        XCTAssertTrue(followed.revealed.isEmpty && followed.opened.isEmpty)
+    }
+
+    func testARemotePaneReportsARefusedForwardAndARevealChordOnce() {
+        let session = Session(initialCwd: NSTemporaryDirectory(), remoteHost: "buildbox")
+        let pane = bareSurface()
+        pane.session = session
+        let followed = recordLinks(mode: .overlay, overlayOpens: true)
+        let forwarded = recordForwards(answer: .originTooOld)
+
         pane.openLink("/tmp/notes.md", intent: .normal)
-        XCTAssertTrue(followed.images.isEmpty)
-        XCTAssertTrue(followed.markdowns.isEmpty)
-        XCTAssertTrue(followed.revealed.isEmpty)
+        pane.openLink("/tmp/notes.md", intent: .reveal)
+        pane.openLink("x-custom://run", intent: .normal)
+
+        XCTAssertEqual(forwarded.clicks.map(\.raw), ["/tmp/notes.md"])
+        XCTAssertEqual(forwarded.refusals.map(\.1), [.originTooOld, .revealIntent])
+        XCTAssertEqual(forwarded.refusals.map(\.0), [session.id, session.id])
+        XCTAssertTrue(followed.revealed.isEmpty && followed.opened.isEmpty && followed.markdowns.isEmpty)
+    }
+
+    func testAClickNamesThePaneItsSurfaceShows() {
+        let session = Session(initialCwd: NSTemporaryDirectory(), remoteHost: "buildbox")
+        session.splitPaneIdentity = UUID()
+        let primary = bareSurface()
+        primary.session = session
+        let split = bareSurface()
+        split.session = session
+        split.isSplitPane = true
+        let forwarded = recordForwards(answer: nil)
+        _ = recordLinks(mode: .overlay, overlayOpens: true)
+
+        primary.openLink("/tmp/a.md", intent: .normal)
+        split.openLink("/tmp/b.md", intent: .normal)
+
+        XCTAssertEqual(forwarded.clicks.map(\.pane), [session.paneIdentity, session.splitPaneIdentity])
+        XCTAssertNil(bareSurface().linkClickPane)
     }
 
     func testAPaneLinkGoesToTheOverlayInOverlayModeAndToTheBrowserWhenItCannotOpen() throws {
@@ -371,6 +538,18 @@ final class GhosttySurfaceViewInputTests: XCTestCase {
         fixture.flagsChanged(keyCode: 56, flags: [.shift, .command])
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
         XCTAssertEqual(fixture.surface.mouseShape, GHOSTTY_MOUSE_SHAPE_POINTER, fixture.geometry)
+    }
+
+    func testShiftPressedWithAButtonDownSkipsTheLinkHoverRefresh() throws {
+        let fixture = try LinkClickFixture(printing: "https://example.com/pr/1")
+        defer { fixture.close() }
+        _ = recordLinks(mode: .overlay, overlayOpens: true)
+        fixture.move(flags: .command)
+        fixture.wait { fixture.surface.mouseShape == GHOSTTY_MOUSE_SHAPE_POINTER }
+        fixture.surface.mouseButtonsDown = { true }
+        fixture.flagsChanged(keyCode: 56, flags: [.shift, .command])
+        fixture.wait { fixture.surface.mouseShape != GHOSTTY_MOUSE_SHAPE_POINTER }
+        XCTAssertNotEqual(fixture.surface.mouseShape, GHOSTTY_MOUSE_SHAPE_POINTER, fixture.geometry)
     }
 
     func testCommandShiftClickOnAStillPointerWithoutAModifierChangeOpensTheBrowser() throws {
@@ -632,6 +811,7 @@ private final class LinkClickFixture {
         window.isReleasedWhenClosed = false
         surface = GhosttySurfaceView(workingDirectory: NSTemporaryDirectory(), command: "printf '\(prefix)\(text)'; cat")
         surface.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
+        surface.mouseButtonsDown = { false }
         window.contentView?.addSubview(surface)
         surface.createSurface()
         XCTAssertTrue(surface.isRealized)

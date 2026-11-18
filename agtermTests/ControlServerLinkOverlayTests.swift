@@ -200,13 +200,43 @@ final class ControlServerLinkOverlayTests: XCTestCase {
                 command: "", cwd: nil, wait: false, sizePercent: nil, backgroundColor: nil, page: .markdown(path: path)))
         }
 
-        XCTAssertEqual(open(missing), ControlResponse(ok: false, error: "session.overlay.open: \(MarkdownProbe.Failure.unreadable(missing))"))
-        XCTAssertEqual(open(fifo), ControlResponse(ok: false, error: "session.overlay.open: \(MarkdownProbe.Failure.unreadable(fifo))"))
-        XCTAssertEqual(open(big.path), ControlResponse(ok: false, error: "session.overlay.open: \(MarkdownProbe.Failure.tooLarge(big.path))"))
+        XCTAssertEqual(open(missing), ControlResponse(ok: false, error: "session.overlay.open: \(MarkdownFile.Failure.unreadable(missing))"))
+        XCTAssertEqual(open(fifo), ControlResponse(ok: false, error: "session.overlay.open: \(MarkdownFile.Failure.unreadable(fifo))"))
+        XCTAssertEqual(open(big.path), ControlResponse(ok: false, error: "session.overlay.open: \(MarkdownFile.Failure.tooLarge(big.path))"))
         XCTAssertNil(session.htmlOverlay)
 
         XCTAssertTrue(open(doc.path).ok)
         XCTAssertEqual(session.htmlOverlay?.source, .markdown(path: doc.path))
+        store.closeOverlay(session.id)
+    }
+
+    func testAMarkdownFileOpenedWithNavigationOverTheControlPathGetsItsLinkGrantOrNoNavigation() throws {
+        let (store, session) = try addSession()
+        let doc = try writeMarkdown("doc.md")
+        let notes = stateDir.appendingPathComponent("notes.txt")
+        try Data("# notes\n".utf8).write(to: notes)
+        let disguised = stateDir.appendingPathComponent("disguised.md")
+        try FileManager.default.createSymbolicLink(at: disguised, withDestinationURL: notes)
+        let open = { (path: String, navigation: Bool) in
+            self.server.openSessionOverlay(session.id.uuidString, window: nil, options: ControlSessionOverlayOpenOptions(
+                command: "", cwd: nil, wait: false, sizePercent: nil, backgroundColor: nil, page: .markdown(path: path),
+                navigation: navigation))
+        }
+
+        XCTAssertTrue(open(doc.path, true).ok)
+        XCTAssertEqual(session.htmlOverlay?.navigation, true)
+        XCTAssertEqual(session.htmlOverlay?.markdownLinks, MarkdownPage.linkGrant(for: doc.path))
+        XCTAssertNotNil(session.htmlOverlay?.markdownLinks)
+        store.closeOverlay(session.id)
+
+        XCTAssertTrue(open(doc.path, false).ok)
+        XCTAssertEqual(session.htmlOverlay?.navigation, false)
+        XCTAssertNil(session.htmlOverlay?.markdownLinks)
+        store.closeOverlay(session.id)
+
+        XCTAssertTrue(open(disguised.path, true).ok)
+        XCTAssertEqual(session.htmlOverlay?.navigation, false)
+        XCTAssertNil(session.htmlOverlay?.markdownLinks)
         store.closeOverlay(session.id)
     }
 
@@ -256,6 +286,20 @@ final class ControlServerLinkOverlayTests: XCTestCase {
         store.closeOverlay(session.id)
     }
 
+    func testAClickedMarkdownFileOpensWithNavigationAndItsLinkGrant() async throws {
+        let (store, session) = try addSession()
+        let doc = try writeMarkdown("doc.md")
+
+        let shown = await openMarkdown(doc, session: session.id, sizePercent: nil)
+
+        XCTAssertTrue(shown)
+        let canonical = doc.resolvingSymlinksInPath().path
+        XCTAssertEqual(session.htmlOverlay?.navigation, true)
+        XCTAssertEqual(session.htmlOverlay?.markdownLinks,
+                       MarkdownLinkGrant(path: canonical, root: URL(fileURLWithPath: canonical).deletingLastPathComponent().path))
+        store.closeOverlay(session.id)
+    }
+
     func testAClickedMarkdownFileIsRefusedUnderAHudAZoomABusySlotOrWhenUnreadable() async throws {
         let (store, session) = try addSession()
         let doc = try writeMarkdown("doc.md")
@@ -281,6 +325,29 @@ final class ControlServerLinkOverlayTests: XCTestCase {
         XCTAssertFalse(zoomed)
         XCTAssertEqual(zoom.target, .session(session.id, .primary))
         XCTAssertNil(session.htmlOverlay)
+    }
+
+    func testAClickedHtmlFileOpensAsADocumentAndAnUnreadableOneOpensNothing() async throws {
+        let (store, session) = try addSession()
+        try FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
+        let page = stateDir.appendingPathComponent("pr.html")
+        try Data("<title>pr</title>".utf8).write(to: page)
+        let binary = stateDir.appendingPathComponent("blob.html")
+        try Data([0x3C, 0x00]).write(to: binary)
+
+        let missing = await openDocument(stateDir.appendingPathComponent("missing.html"), session: session.id, sizePercent: nil)
+        let unreadable = await openDocument(binary, session: session.id, sizePercent: nil)
+        XCTAssertFalse(missing)
+        XCTAssertFalse(unreadable)
+        XCTAssertNil(session.htmlOverlay)
+
+        let shown = await openDocument(page, session: session.id, sizePercent: 75)
+        XCTAssertTrue(shown)
+        XCTAssertEqual(session.htmlOverlay?.source, .document(path: page.path))
+        XCTAssertEqual(session.htmlOverlay?.javascript, false)
+        XCTAssertEqual(session.htmlOverlay?.clicked, true)
+        XCTAssertEqual(session.overlaySizePercent, 75)
+        store.closeOverlay(session.id)
     }
 
     func testAClickedLogOpensAsAFollowingLogPageAndItsLocationAsTheStaticPage() async throws {
@@ -543,6 +610,12 @@ final class ControlServerLinkOverlayTests: XCTestCase {
         let link = LinkPolicy.TextLink(url: url, line: line, session: id, sizePercent: sizePercent)
         return await withCheckedContinuation { continuation in
             server.openTextLink(link) { continuation.resume(returning: $0) }
+        }
+    }
+
+    private func openDocument(_ url: URL, session id: UUID, sizePercent: Int?) async -> Bool {
+        await withCheckedContinuation { continuation in
+            server.openDocumentLink(url, session: id, sizePercent: sizePercent) { continuation.resume(returning: $0) }
         }
     }
 

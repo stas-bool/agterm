@@ -239,6 +239,23 @@ struct ControlDispatcherSessionMetadataTests {
         ])
     }
 
+    @Test func sessionStatusPassesIfIdleThrough() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        _ = await dispatcher.dispatch(ControlRequest(cmd: .sessionStatus, target: "session",
+                                                     args: ControlArgs(status: "active", ifIdle: true)))
+        _ = await dispatcher.dispatch(ControlRequest(cmd: .sessionStatus, target: "session",
+                                                     args: ControlArgs(status: "active")))
+
+        #expect(actions.calls == [
+            .sessionStatus(target: "session", window: nil,
+                           ControlSessionStatusUpdate(status: .active, blink: nil, autoReset: nil, sound: nil, ifIdle: true)),
+            .sessionStatus(target: "session", window: nil,
+                           ControlSessionStatusUpdate(status: .active, blink: nil, autoReset: nil, sound: nil)),
+        ])
+    }
+
     @Test func sessionStatusRevertsColorWhenOmitted() async {
         let actions = MockControlActions()
         let dispatcher = ControlDispatcher(actions: actions)
@@ -393,6 +410,101 @@ struct ControlDispatcherSessionMetadataTests {
 
         #expect(colorOverShape == ControlResponse(ok: false, error: "invalid color (expected #rrggbb)"))
         #expect(shapeOverPane == ControlResponse(ok: false, error: "invalid shape: hexagon (\(accepted))"))
+        #expect(actions.calls.isEmpty)
+    }
+
+    @Test func sessionStatusPassesGlyphThrough() async {
+        // a per-call emoji GLYPH overrides the silhouette entirely; ZWJ sequences are single grapheme
+        // clusters in Swift, so a family emoji passes the same 1...4-cluster cap as a lone emoji.
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        _ = await dispatcher.dispatch(ControlRequest(
+            cmd: .sessionStatus, target: "session",
+            args: ControlArgs(status: "blocked", glyph: "🔥")
+        ))
+        _ = await dispatcher.dispatch(ControlRequest(
+            cmd: .sessionStatus, target: "session",
+            args: ControlArgs(status: "active", glyph: "👨‍👩‍👧‍👦")
+        ))
+        // a set without one clears it, exactly like --shape/--color on the ephemeral indicator.
+        _ = await dispatcher.dispatch(ControlRequest(
+            cmd: .sessionStatus, target: "session",
+            args: ControlArgs(status: "completed")
+        ))
+
+        #expect(actions.calls == [
+            .sessionStatus(target: "session", window: nil,
+                           ControlSessionStatusUpdate(status: .blocked, blink: nil, autoReset: nil,
+                                                      sound: nil, glyph: "🔥")),
+            .sessionStatus(target: "session", window: nil,
+                           ControlSessionStatusUpdate(status: .active, blink: nil, autoReset: nil,
+                                                      sound: nil, glyph: "👨‍👩‍👧‍👦")),
+            .sessionStatus(target: "session", window: nil,
+                           ControlSessionStatusUpdate(status: .completed, blink: nil, autoReset: nil,
+                                                      sound: nil, glyph: nil)),
+        ])
+    }
+
+    @Test func sessionStatusTrimsSurroundingWhitespaceOffAGlyph() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        _ = await dispatcher.dispatch(ControlRequest(
+            cmd: .sessionStatus, target: "session",
+            args: ControlArgs(status: "blocked", glyph: "  🔥  ")
+        ))
+
+        #expect(actions.calls == [
+            .sessionStatus(target: "session", window: nil,
+                           ControlSessionStatusUpdate(status: .blocked, blink: nil, autoReset: nil,
+                                                      sound: nil, glyph: "🔥")),
+        ])
+    }
+
+    @Test func sessionStatusRejectsTooLongGlyphWithoutMutating() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        let response = await dispatcher.dispatch(ControlRequest(
+            cmd: .sessionStatus, target: "session",
+            args: ControlArgs(status: "blocked", glyph: "🔥🔥🔥🔥🔥")
+        ))
+
+        #expect(response == ControlResponse(ok: false, error: "invalid glyph: at most 4 characters"))
+        #expect(actions.calls.isEmpty)
+    }
+
+    @Test func sessionStatusRejectsBlankGlyphWithoutMutating() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+
+        let response = await dispatcher.dispatch(ControlRequest(
+            cmd: .sessionStatus, target: "session",
+            args: ControlArgs(status: "blocked", glyph: "   ")
+        ))
+
+        #expect(response == ControlResponse(ok: false, error: "invalid glyph: must not be empty"))
+        #expect(actions.calls.isEmpty)
+    }
+
+    @Test func sessionStatusValidatesShapeThenGlyphThenPane() async {
+        let actions = MockControlActions()
+        let dispatcher = ControlDispatcher(actions: actions)
+        let accepted = StatusShape.allCases.map(\.rawValue).joined(separator: "|")
+
+        // pin both boundaries around the glyph guard, like color/shape/pane above.
+        let shapeOverGlyph = await dispatcher.dispatch(ControlRequest(
+            cmd: .sessionStatus, target: "session",
+            args: ControlArgs(status: "blocked", shape: "hexagon", glyph: "🔥🔥🔥🔥🔥")
+        ))
+        let glyphOverPane = await dispatcher.dispatch(ControlRequest(
+            cmd: .sessionStatus, target: "session",
+            args: ControlArgs(pane: "middle", status: "blocked", glyph: "🔥🔥🔥🔥🔥")
+        ))
+
+        #expect(shapeOverGlyph == ControlResponse(ok: false, error: "invalid shape: hexagon (\(accepted))"))
+        #expect(glyphOverPane == ControlResponse(ok: false, error: "invalid glyph: at most 4 characters"))
         #expect(actions.calls.isEmpty)
     }
 

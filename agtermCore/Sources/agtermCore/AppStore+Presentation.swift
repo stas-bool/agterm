@@ -27,7 +27,7 @@ extension AppStore {
     }
 
     func presentationLayout(of session: Session) -> PresentationLayout? {
-        guard session.remoteHost == nil else { return nil }
+        guard session.remoteHost == nil, session.content != .page else { return nil }
         let panes = [session.paneIdentity] + (session.hasSplit ? [session.splitPaneIdentity].compactMap { $0 } : [])
         return PresentationLayout(panes: panes, primary: session.paneIdentity,
                                   axis: session.hasSplit ? session.splitAxis.rawValue : nil, shown: session.isSplit)
@@ -38,6 +38,31 @@ extension AppStore {
         if let layout = presentationLayout(of: session) {
             presentationHub?.publishLayout(layout, session: session.id)
         }
+    }
+
+    /// openHeadlessHud reserves the HUD slot with its spec alone, for a store whose presenter draws and measures the
+    /// panel (agterm-server): no helper command, body file or measured size, so the tree reports no geometry for it.
+    /// A live HUD is replaced, and a running program refuses, as `openHud`, including one handed to the presenter.
+    @discardableResult public func openHeadlessHud(_ sessionID: UUID, spec: HudSpec, paneIdentity: UUID? = nil) -> Bool {
+        guard let session = session(withID: sessionID), session.remoteOverlays.slot(nil) == nil else { return false }
+        if session.hudActive { closeOverlay(sessionID) }
+        guard !session.overlayActive else { return false }
+        session.overlayExitCode = nil
+        session.remoteOverlays.clearFailure(nil)
+        session.overlaySlotGeneration += 1
+        session.hudSpec = spec
+        session.hudPaneIdentity = paneIdentity
+        session.overlayActive = true
+        scheduleTreeChanged()
+        return true
+    }
+
+    /// updateHeadlessHud replaces a headless HUD's spec, keeping the fields the open fixed; false with no HUD up.
+    @discardableResult public func updateHeadlessHud(_ sessionID: UUID, spec: HudSpec, paneIdentity: UUID? = nil) -> Bool {
+        guard let session = session(withID: sessionID), let live = session.hudSpec, session.hudActive else { return false }
+        session.hudSpec = spec.holdingCreationFields(of: live)
+        session.hudPaneIdentity = paneIdentity
+        return true
     }
 
     /// Publishes the session's live HUD to attached viewers. Called once its body is on disk, never before:
@@ -76,7 +101,7 @@ extension AppStore {
         let indicator = session.agentIndicator
         guard indicator.status != .idle else { return nil }
         return PresentationStatus(status: indicator.status, blink: indicator.blink, color: indicator.color,
-                                  shape: indicator.shape,
+                                  shape: indicator.shape, glyph: indicator.glyph,
                                   pane: presentationStatusPane(indicator.statusPane, of: session),
                                   changedAt: session.statusChangedAt?.timeIntervalSince1970)
     }
@@ -97,7 +122,7 @@ extension AppStore {
     public func presentStatusSoundRemotely(_ sound: PresentationSound, in session: Session, pane: StatusPane?) -> Bool {
         guard let hub = presentationHub, hub.hasPresenter(session: session.id),
               case .identity(let identity) = presentationStatusPane(pane, of: session),
-              session.followsRemotely(paneIdentity: identity) else { return false }
+              presentsRemotely(session, paneIdentity: identity) else { return false }
         return hub.sendToPresenter(.sound(sound), session: session.id)
     }
 }
