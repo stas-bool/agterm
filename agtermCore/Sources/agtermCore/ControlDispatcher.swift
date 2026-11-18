@@ -132,6 +132,53 @@ public struct ControlDispatcher {
         return actions.readEvents(ControlEventReadOptions(cursor: cursor, kinds: kinds, limit: limit))
     }
 
+    /// The `session.status` argument surface: status/color/shape/glyph/pane validation and the update.
+    /// A method of its own, like `dispatchSessionFlag`: `dispatchSessionCommand`'s switch sits at
+    /// swiftlint's cyclomatic-complexity cap, and the per-call overrides only grew it.
+    private func dispatchSessionStatus(_ request: ControlRequest) async -> ControlResponse {
+        guard let status = AgentStatus(rawValue: request.args?.status ?? "") else {
+            return ControlResponse(ok: false, error: "invalid status")
+        }
+        if let color = request.args?.color, !WatermarkConfig.isValidColorHex(color) {
+            return ControlResponse(ok: false, error: "invalid color (expected #rrggbb)")
+        }
+        var shape: StatusShape?
+        if let raw = request.args?.shape {
+            guard let parsed = StatusShape(rawValue: raw) else {
+                return ControlResponse(ok: false, error: "invalid shape: \(raw) (\(StatusShape.validNamesList))")
+            }
+            shape = parsed
+        }
+        var glyph: String?
+        if let raw = request.args?.glyph {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                return ControlResponse(ok: false, error: "invalid glyph: must not be empty")
+            }
+            if trimmed.count > 4 {
+                return ControlResponse(ok: false, error: "invalid glyph: at most 4 characters")
+            }
+            // ZWJ (U+200D) is a FORMAT (Cf) scalar and the backbone of composed emoji, so only true
+            // control scalars (Cc: \n, NUL, ESC...) are rejected — not all of CharacterSet.controlCharacters
+            if trimmed.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) {
+                return ControlResponse(ok: false, error: "invalid glyph: control characters not allowed")
+            }
+            glyph = trimmed
+        }
+        let pane: StatusPane?
+        switch parsePane(request.args?.pane) {
+        case .pane(let parsed): pane = parsed
+        case .rejected(let rejection): return rejection
+        }
+        let update = ControlSessionStatusUpdate(status: status, blink: request.args?.blink,
+                                                autoReset: request.args?.autoReset,
+                                                sound: request.args?.sound, color: request.args?.color,
+                                                shape: shape, glyph: glyph,
+                                                pane: pane, paneID: request.args?.paneID,
+                                                ifIdle: request.args?.ifIdle ?? false)
+        return await actions.setSessionStatus(request.target, window: request.args?.window, update: update)
+    }
+
     private func dispatchSessionCommand(_ request: ControlRequest) async -> ControlResponse {
         switch request.cmd {
         case .sessionNew:
@@ -250,47 +297,7 @@ public struct ControlDispatcher {
         case .sessionSeen:
             return actions.markSessionSeen(request.target, window: request.args?.window)
         case .sessionStatus:
-            guard let status = AgentStatus(rawValue: request.args?.status ?? "") else {
-                return ControlResponse(ok: false, error: "invalid status")
-            }
-            if let color = request.args?.color, !WatermarkConfig.isValidColorHex(color) {
-                return ControlResponse(ok: false, error: "invalid color (expected #rrggbb)")
-            }
-            var shape: StatusShape?
-            if let raw = request.args?.shape {
-                guard let parsed = StatusShape(rawValue: raw) else {
-                    return ControlResponse(ok: false, error: "invalid shape: \(raw) (\(StatusShape.validNamesList))")
-                }
-                shape = parsed
-            }
-            var glyph: String?
-            if let raw = request.args?.glyph {
-                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmed.isEmpty {
-                    return ControlResponse(ok: false, error: "invalid glyph: must not be empty")
-                }
-                if trimmed.count > 4 {
-                    return ControlResponse(ok: false, error: "invalid glyph: at most 4 characters")
-                }
-                // ZWJ (U+200D) is a FORMAT (Cf) scalar and the backbone of composed emoji, so only true
-                // control scalars (Cc: \n, NUL, ESC...) are rejected — not all of CharacterSet.controlCharacters
-                if trimmed.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) {
-                    return ControlResponse(ok: false, error: "invalid glyph: control characters not allowed")
-                }
-                glyph = trimmed
-            }
-            let pane: StatusPane?
-            switch parsePane(request.args?.pane) {
-            case .pane(let parsed): pane = parsed
-            case .rejected(let rejection): return rejection
-            }
-            let update = ControlSessionStatusUpdate(status: status, blink: request.args?.blink,
-                                                    autoReset: request.args?.autoReset,
-                                                    sound: request.args?.sound, color: request.args?.color,
-                                                    shape: shape, glyph: glyph,
-                                                    pane: pane, paneID: request.args?.paneID,
-                                                    ifIdle: request.args?.ifIdle ?? false)
-            return await actions.setSessionStatus(request.target, window: request.args?.window, update: update)
+            return await dispatchSessionStatus(request)
         case .sessionRestore:
             return dispatchSessionRestore(request)
         default:
